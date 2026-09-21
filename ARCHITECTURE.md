@@ -2,7 +2,7 @@
 
 ## Current vertical slice
 
-Next.js App Router + React client components for local-only workflows. IndexedDB stores sensitive media, derived silhouette metadata, and the generated BodyMesh. No authentication, database, or object storage is connected because body-photo privacy/retention rules must be explicit before server persistence.
+Next.js App Router + React client components for local-only workflows. IndexedDB stores sensitive media, derived silhouette metadata, BodyMesh data, and garment calibration metadata. No authentication, database, or object storage is connected because body-photo privacy/retention rules must be explicit before server persistence.
 
 ## Body calibration pipeline — implemented
 
@@ -17,31 +17,84 @@ Next.js App Router + React client components for local-only workflows. IndexedDB
 9. 64 elliptical rings × 32 segments produce an indexed, watertight coarse mesh with vertex normals and centimeter coordinates.
 10. Calibration quality records per-view confidence and opposite-view disagreement.
 
-The resulting mesh is a **coarse collision hull v1**. It is useful as a deterministic 3D body envelope and future cloth-collision input, but it does not model separate arms/legs or solve full camera intrinsics.
+The resulting mesh is a **coarse collision hull v1**. It is useful as a deterministic 3D body envelope and cloth-collision input, but it does not model separate arms/legs or solve full camera intrinsics.
 
 ## Camera model
 
 The current calibration uses weak-perspective normalization: each view is independently scaled by detected body height, which reduces moderate camera-distance differences. This is not a calibrated pinhole-camera reconstruction. A later capture protocol can add known camera intrinsics/extrinsics or fiducial markers without changing the BodyMesh contract.
 
-## Garment image pipeline
+## Garment image + calibration pipeline — implemented
 
-1. User photographs garment on a visually uniform background.
+1. User photographs garment front/back on a visually uniform background.
 2. Canvas downsizes to a bounded working resolution.
 3. Corner/background samples estimate the background RGB.
-4. Euclidean color distance removes/feathers pixels near that color.
-5. The PNG alpha image is stored locally.
-6. A pure geometry function maps body measurements + garment category to an initial 2D fit box.
-7. User can correct scale/X/Y without changing source media.
+4. Euclidean color distance removes/feathers the background into PNG alpha.
+5. Alpha silhouettes are sampled into 48 horizontal width + center profiles for front and back.
+6. Front/back consistency produces a garment calibration score and warnings.
+7. The processed PNGs and calibration metadata are stored locally.
 
-The garment preview remains an MVP 2D approximation.
+Legacy garments without calibration are recalibrated on demand from their stored processed PNGs when physical try-on starts.
+
+## GarmentMesh v1 — implemented
+
+- Two independent panels are generated from the **actual calibrated front/back silhouettes**, not from a fixed rectangular garment.
+- Category-aware scaling anchors tops around the chest/shoulder band and pants/shorts around waist/hips.
+- Image aspect ratio influences physical garment length while body size bounds the scale.
+- The initial surface is placed just outside the elliptical BodyMesh, using local section depth at each row.
+- Each panel contains structural, shear and bend constraints.
+- Left/right edges receive seam constraints.
+- Tops, shirts and hoodies also receive shoulder seams with an unsewn center neck opening.
+- UV coordinates are generated for every particle so a future renderer can deform the real garment texture over the solved mesh.
+
+Current pants/shorts remain a **single envelope** around both legs because BodyMesh v1 does not yet separate left/right leg topology.
+
+## XPBD cloth solver — implemented
+
+The local solver uses Verlet-style integration plus XPBD distance constraints:
+
+- structural stretch
+- shear
+- bend
+- seam
+- gravity
+- damping
+- collision thickness
+- approximate friction
+- BodyMesh collision every solver iteration
+
+Garment metadata maps to material parameters:
+
+- **stretch level** controls structural/shear compliance
+- **fabric weight** controls bend compliance, damping and collision thickness
+
+The try-on runs 144 simulation steps in small `requestAnimationFrame` batches so the UI remains responsive and can show determinate progress.
+
+## Collision model — implemented
+
+At each cloth particle Y coordinate, MIRRO interpolates an elliptical BodyMesh cross-section. Particles that enter the expanded ellipse are projected back to its boundary, with garment thickness included in the collision radius. This is fast and deterministic, but inherits the BodyMesh v1 limitation: merged arm/leg volume instead of anatomical limb topology.
+
+## Rendering
+
+The physical preview currently uses a dependency-free Canvas 2D orthographic renderer:
+
+- BodyMesh wireframe
+- depth-sorted GarmentMesh triangles
+- interactive yaw rotation
+- simulation diagnostics
+
+This preview intentionally does **not** claim photorealism. UVs already exist for a later Three.js/WebGPU renderer that can apply the processed front/back garment textures.
+
+The original photo-based 2D compositor remains as a fallback mode.
 
 ## Engine roadmap
 
-- Improve body topology from one-ring-per-height hull to separate torso, arms and legs.
+- Separate BodyMesh torso, arms and left/right legs.
 - Add explicit camera calibration / capture fiducials for metric multi-view reconstruction.
-- Generate garment meshes from known dimensions and category templates.
-- XPBD cloth simulation with collision against the BodyMesh.
-- Three.js/WebGPU rendering, with a WebGL fallback if required by supported devices.
+- Split garment topology by semantic regions (sleeves, torso, crotch, legs, waistband).
+- Add garment self-collision and collision against separate body limbs.
+- Add texture deformation from the real front/back photos using the existing UVs.
+- Move long-running cloth work to a Worker/WASM path when mesh density increases.
+- Add Three.js/WebGPU rendering with WebGL fallback where needed.
 
 ## Cloud boundary (future)
 

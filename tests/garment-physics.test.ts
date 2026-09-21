@@ -10,11 +10,11 @@ import {
   buildGarmentMesh,
   clothMaterialForGarment,
 } from "../src/lib/mirro/garment-mesh";
-import { simulateCloth } from "../src/lib/mirro/xpbd";
+import { simulateCloth, solveGarmentSelfCollisions } from "../src/lib/mirro/xpbd";
 import type {
   BodySilhouette,
   Garment,
-  GarmentSilhouette,
+  GarmentMesh,
 } from "../src/lib/mirro/types";
 
 function alphaGarment(width = 140, height = 180, back = false): AlphaImage {
@@ -184,6 +184,37 @@ describe("GarmentMesh + XPBD", () => {
       );
       expect(inside).toBe(false);
     }
+  });
+
+  it("separates nearby non-neighbor particles with spatial-hash self-collision", () => {
+    const calibration = calibrationFromProfiles();
+    const garment = makeGarment(calibration);
+    const material = clothMaterialForGarment(garment);
+    const mesh: GarmentMesh = {
+      version: 1,
+      coordinateSystem: "x-right-y-up-z-front-centimeters",
+      category: "top",
+      rows: 1,
+      cols: 2,
+      panelVertexCount: 2,
+      positions: [0, 0, 0, 0.1, 0, 0],
+      previousPositions: [0, 0, 0, 0.1, 0, 0],
+      inverseMass: [1, 1],
+      uv: [0, 0, 1, 0],
+      indices: [],
+      constraints: [],
+      boundsCm: { width: 0.1, height: 0, depth: 0 },
+    };
+
+    const collisions = solveGarmentSelfCollisions(mesh, material);
+    const distance = Math.hypot(
+      mesh.positions[3] - mesh.positions[0],
+      mesh.positions[4] - mesh.positions[1],
+      mesh.positions[5] - mesh.positions[2],
+    );
+
+    expect(collisions).toBe(1);
+    expect(distance).toBeGreaterThanOrEqual(material.thicknessCm * 2.15 - 1e-6);
   });
 
   it("maps heavier fabrics to stiffer bending and thicker collision", () => {

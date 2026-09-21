@@ -1,25 +1,131 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BodyMesh, GarmentMesh } from "@/lib/mirro/types";
 
 type Point2D = { x: number; y: number; depth: number };
+
+function loadCanvasImage(url: string | null) {
+  if (!url) return Promise.resolve<HTMLImageElement | null>(null);
+
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new window.Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Não foi possível carregar a textura da peça."));
+    image.src = url;
+  });
+}
+
+function drawTexturedTriangle(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  source: Array<{ x: number; y: number }>,
+  destination: Point2D[],
+) {
+  const [s1, s2, s3] = source;
+  const [d1, d2, d3] = destination;
+  const denominator =
+    s1.x * (s2.y - s3.y) +
+    s2.x * (s3.y - s1.y) +
+    s3.x * (s1.y - s2.y);
+
+  if (Math.abs(denominator) < 1e-5) return;
+
+  const a =
+    (d1.x * (s2.y - s3.y) +
+      d2.x * (s3.y - s1.y) +
+      d3.x * (s1.y - s2.y)) /
+    denominator;
+  const c =
+    (d1.x * (s3.x - s2.x) +
+      d2.x * (s1.x - s3.x) +
+      d3.x * (s2.x - s1.x)) /
+    denominator;
+  const e =
+    (d1.x * (s2.x * s3.y - s3.x * s2.y) +
+      d2.x * (s3.x * s1.y - s1.x * s3.y) +
+      d3.x * (s1.x * s2.y - s2.x * s1.y)) /
+    denominator;
+
+  const b =
+    (d1.y * (s2.y - s3.y) +
+      d2.y * (s3.y - s1.y) +
+      d3.y * (s1.y - s2.y)) /
+    denominator;
+  const d =
+    (d1.y * (s3.x - s2.x) +
+      d2.y * (s1.x - s3.x) +
+      d3.y * (s2.x - s1.x)) /
+    denominator;
+  const f =
+    (d1.y * (s2.x * s3.y - s3.x * s2.y) +
+      d2.y * (s3.x * s1.y - s1.x * s3.y) +
+      d3.y * (s1.x * s2.y - s2.x * s1.y)) /
+    denominator;
+
+  context.save();
+  context.beginPath();
+  context.moveTo(d1.x, d1.y);
+  context.lineTo(d2.x, d2.y);
+  context.lineTo(d3.x, d3.y);
+  context.closePath();
+  context.clip();
+  context.setTransform(a, b, c, d, e, f);
+  context.drawImage(image, 0, 0);
+  context.restore();
+}
 
 export function ClothSimulationPreview({
   bodyMesh,
   garmentMesh,
   revision,
   yawDegrees,
+  frontTextureUrl,
+  backTextureUrl,
+  textured,
 }: {
   bodyMesh: BodyMesh;
   garmentMesh: GarmentMesh;
   revision: number;
   yawDegrees: number;
+  frontTextureUrl: string | null;
+  backTextureUrl: string | null;
+  textured: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frontTextureRef = useRef<HTMLImageElement | null>(null);
+  const backTextureRef = useRef<HTMLImageElement | null>(null);
+  const [textureRevision, setTextureRevision] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    Promise.all([
+      loadCanvasImage(frontTextureUrl),
+      loadCanvasImage(backTextureUrl),
+    ])
+      .then(([front, back]) => {
+        if (!active) return;
+        frontTextureRef.current = front;
+        backTextureRef.current = back;
+        setTextureRevision((value) => value + 1);
+      })
+      .catch(() => {
+        if (!active) return;
+        frontTextureRef.current = null;
+        backTextureRef.current = null;
+        setTextureRevision((value) => value + 1);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [frontTextureUrl, backTextureUrl]);
 
   useEffect(() => {
     void revision;
+    void textureRevision;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const context = canvas.getContext("2d");
@@ -87,7 +193,7 @@ export function ClothSimulationPreview({
       context.stroke();
     }
 
-    context.globalAlpha = 0.42;
+    context.globalAlpha = 0.38;
     for (let segment = 0; segment < bodyMesh.segmentsPerRing; segment += 4) {
       context.beginPath();
       for (let ring = 0; ring < bodyMesh.ringCount; ring += 1) {
@@ -99,33 +205,69 @@ export function ClothSimulationPreview({
     }
 
     const triangles: Array<{
-      a: Point2D;
-      b: Point2D;
-      c: Point2D;
+      indices: [number, number, number];
+      points: [Point2D, Point2D, Point2D];
       depth: number;
+      panel: 0 | 1;
     }> = [];
 
     for (let offset = 0; offset < garmentMesh.indices.length; offset += 3) {
-      const a = garmentPoint(garmentMesh.indices[offset]);
-      const b = garmentPoint(garmentMesh.indices[offset + 1]);
-      const c = garmentPoint(garmentMesh.indices[offset + 2]);
-      triangles.push({ a, b, c, depth: (a.depth + b.depth + c.depth) / 3 });
+      const ia = garmentMesh.indices[offset];
+      const ib = garmentMesh.indices[offset + 1];
+      const ic = garmentMesh.indices[offset + 2];
+      const a = garmentPoint(ia);
+      const b = garmentPoint(ib);
+      const c = garmentPoint(ic);
+      triangles.push({
+        indices: [ia, ib, ic],
+        points: [a, b, c],
+        depth: (a.depth + b.depth + c.depth) / 3,
+        panel: ia < garmentMesh.panelVertexCount ? 0 : 1,
+      });
     }
 
     triangles.sort((a, b) => a.depth - b.depth);
-    context.fillStyle = thread;
-    context.strokeStyle = thread;
-    context.lineWidth = 0.65;
+    const canTexture =
+      textured &&
+      frontTextureRef.current !== null &&
+      backTextureRef.current !== null;
 
     for (const triangle of triangles) {
+      const texture =
+        triangle.panel === 0
+          ? frontTextureRef.current
+          : backTextureRef.current;
+
+      if (canTexture && texture) {
+        const source = triangle.indices.map((index) => ({
+          x: garmentMesh.uv[index * 2] * texture.width,
+          y: garmentMesh.uv[index * 2 + 1] * texture.height,
+        }));
+        drawTexturedTriangle(
+          context,
+          texture,
+          source,
+          triangle.points,
+        );
+      } else {
+        context.beginPath();
+        context.moveTo(triangle.points[0].x, triangle.points[0].y);
+        context.lineTo(triangle.points[1].x, triangle.points[1].y);
+        context.lineTo(triangle.points[2].x, triangle.points[2].y);
+        context.closePath();
+        context.fillStyle = thread;
+        context.globalAlpha = 0.085;
+        context.fill();
+      }
+
       context.beginPath();
-      context.moveTo(triangle.a.x, triangle.a.y);
-      context.lineTo(triangle.b.x, triangle.b.y);
-      context.lineTo(triangle.c.x, triangle.c.y);
+      context.moveTo(triangle.points[0].x, triangle.points[0].y);
+      context.lineTo(triangle.points[1].x, triangle.points[1].y);
+      context.lineTo(triangle.points[2].x, triangle.points[2].y);
       context.closePath();
-      context.globalAlpha = 0.085;
-      context.fill();
-      context.globalAlpha = 0.22;
+      context.strokeStyle = thread;
+      context.lineWidth = 0.55;
+      context.globalAlpha = canTexture ? 0.075 : 0.22;
       context.stroke();
     }
 
@@ -133,8 +275,21 @@ export function ClothSimulationPreview({
     context.fillStyle = muted;
     context.font = "600 11px Manrope, sans-serif";
     context.textAlign = "right";
-    context.fillText(`${garmentMesh.positions.length / 3} partículas`, width - 14, 20);
-  }, [bodyMesh, garmentMesh, revision, yawDegrees]);
+    context.fillText(
+      textured && canTexture
+        ? "textura real · deformada"
+        : `${garmentMesh.positions.length / 3} partículas`,
+      width - 14,
+      20,
+    );
+  }, [
+    bodyMesh,
+    garmentMesh,
+    revision,
+    yawDegrees,
+    textureRevision,
+    textured,
+  ]);
 
   return (
     <figure>
@@ -147,7 +302,7 @@ export function ClothSimulationPreview({
         className="aspect-[31/38] w-full bg-white"
       />
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        Preview geométrico do XPBD. A malha usa o contorno real da peça; textura fotográfica deformada ainda não é renderizada nesta etapa.
+        Durante o cálculo, o MIRRO mostra a malha física. Quando estabiliza, projeta as fotos reais de frente e costas sobre os UVs resolvidos.
       </figcaption>
     </figure>
   );

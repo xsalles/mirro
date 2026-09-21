@@ -22,6 +22,7 @@ type SimulationData = {
   material: ClothMaterial;
   calibrationScore: number;
   collisions: number;
+  selfCollisions: number;
 };
 
 function useMediaUrl(key?: string) {
@@ -115,12 +116,14 @@ export default function TryOnPage() {
       const stepsPerFrame = 4;
       let currentStep = 0;
       let collisions = 0;
+      let selfCollisions = 0;
 
       setSimulationData({
         mesh,
         material,
         calibrationScore: calibration.quality.score,
         collisions: 0,
+        selfCollisions: 0,
       });
       setRevision((value) => value + 1);
       setSimulationStatus("simulating");
@@ -141,6 +144,7 @@ export default function TryOnPage() {
             iterations: 9,
           });
           collisions += result.collisions;
+          selfCollisions += result.selfCollisions;
           currentStep += 1;
         }
 
@@ -157,6 +161,7 @@ export default function TryOnPage() {
           material,
           calibrationScore: calibration.quality.score,
           collisions,
+          selfCollisions,
         });
         setSimulationStatus("ready");
       }
@@ -418,7 +423,10 @@ export default function TryOnPage() {
                     <p>elasticidade: <strong className="text-[var(--ink)]">{garment?.stretch}</strong></p>
                     <p>espessura de colisão: <strong className="text-[var(--ink)] tabular-nums">{simulationData.material.thicknessCm.toFixed(2)} cm</strong></p>
                     {simulationStatus === "ready" ? (
-                      <p>contatos resolvidos: <strong className="text-[var(--ink)] tabular-nums">{simulationData.collisions.toLocaleString("pt-BR")}</strong></p>
+                      <>
+                        <p>corpo × tecido: <strong className="text-[var(--ink)] tabular-nums">{simulationData.collisions.toLocaleString("pt-BR")}</strong></p>
+                        <p>tecido × tecido: <strong className="text-[var(--ink)] tabular-nums">{simulationData.selfCollisions.toLocaleString("pt-BR")}</strong></p>
+                      </>
                     ) : null}
                   </div>
                 ) : null}
@@ -465,7 +473,7 @@ export default function TryOnPage() {
           )}
 
           <div className="rounded-2xl bg-[var(--thread-soft)] p-5 text-sm leading-6">
-            <strong>Limite atual:</strong> o GarmentMesh já tem frente, costas, gola/ombros e costuras laterais, mas calças ainda usam um envelope único porque o BodyMesh v1 também não separa as duas pernas. Auto-colisão e textura deformada entram na próxima camada.
+            <strong>Limite atual:</strong> o GarmentMesh já resolve colisão com o corpo e self-collision espacial do tecido. Calças ainda usam um envelope único porque o BodyMesh v1 não separa as duas pernas; PBR e topologia anatômica continuam como próximas camadas.
           </div>
         </aside>
       </div>

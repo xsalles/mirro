@@ -12,7 +12,7 @@ import { fitGarment } from "@/lib/mirro/fit";
 import { calibrateGarmentFromProcessedImages } from "@/lib/mirro/garment-image-processing";
 import { buildGarmentMesh, clothMaterialForGarment } from "@/lib/mirro/garment-mesh";
 import { simulateClothStep } from "@/lib/mirro/xpbd";
-import type { ClothMaterial, Garment, GarmentMesh } from "@/lib/mirro/types";
+import type { ClothMaterial, Garment, GarmentCalibration, GarmentMesh } from "@/lib/mirro/types";
 
 type PreviewMode = "physics" | "photo";
 type SimulationStatus = "idle" | "preparing" | "simulating" | "ready" | "error";
@@ -74,7 +74,9 @@ export default function TryOnPage() {
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
 
   useEffect(() => {
-    if (!bodyMesh || !garment || mode !== "physics") return;
+    const currentBodyMesh = bodyMesh;
+    const currentGarment = garment;
+    if (!currentBodyMesh || !currentGarment || mode !== "physics") return;
 
     let active = true;
     let animationFrame = 0;
@@ -85,11 +87,13 @@ export default function TryOnPage() {
       setSimulationError("");
       setSimulationData(null);
 
-      let calibration = garment.calibration;
-      if (!calibration) {
+      let calibration: GarmentCalibration;
+      if (currentGarment.calibration) {
+        calibration = currentGarment.calibration;
+      } else {
         const [frontBlob, backBlob] = await Promise.all([
-          loadMedia(garment.images.front.key),
-          loadMedia(garment.images.back.key),
+          loadMedia(currentGarment.images.front.key),
+          loadMedia(currentGarment.images.back.key),
         ]);
         if (!frontBlob || !backBlob) {
           throw new Error("As imagens desta peça não estão mais disponíveis neste navegador.");
@@ -100,11 +104,11 @@ export default function TryOnPage() {
       if (!active) return;
 
       const mesh = buildGarmentMesh({
-        garment,
+        garment: currentGarment,
         calibration,
-        bodyMesh,
+        bodyMesh: currentBodyMesh,
       });
-      const material = clothMaterialForGarment(garment);
+      const material = clothMaterialForGarment(currentGarment);
       const totalSteps = 144;
       const stepsPerFrame = 4;
       let currentStep = 0;
@@ -129,7 +133,7 @@ export default function TryOnPage() {
         ) {
           const result = simulateClothStep({
             mesh,
-            bodyMesh,
+            bodyMesh: currentBodyMesh,
             material,
             dt: 1 / 60,
             iterations: 9,

@@ -607,7 +607,7 @@ export function buildBodyCalibration(
 
   return {
     version: 1,
-    method: "weak-perspective-visual-hull-v1",
+    method: "weak-perspective-elliptical-hull-v1",
     sampleCount,
     silhouettes,
     mesh,

@@ -7,12 +7,66 @@ export type MediaRef = {
   size: number;
 };
 
-export type BodyProfile = {
+export type BodyMeasurements = {
   heightCm: number;
   chestCm: number;
   waistCm: number;
   hipsCm: number;
+};
+
+export type BodySilhouette = {
+  sourceWidth: number;
+  sourceHeight: number;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  widthProfile: number[];
+  foregroundRatio: number;
+  backgroundThreshold: number;
+  confidence: number;
+};
+
+export type BodyMesh = {
+  version: 1;
+  coordinateSystem: "x-right-y-up-z-front-centimeters";
+  ringCount: number;
+  segmentsPerRing: number;
+  vertices: number[];
+  normals: number[];
+  indices: number[];
+  landmarks: {
+    chestRing: number;
+    waistRing: number;
+    hipsRing: number;
+  };
+  boundsCm: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+};
+
+export type BodyCalibration = {
+  version: 1;
+  method: "weak-perspective-elliptical-hull-v1";
+  sampleCount: number;
+  silhouettes: Record<BodySide, BodySilhouette>;
+  mesh: BodyMesh;
+  quality: {
+    score: number;
+    frontBackDifference: number;
+    sideDifference: number;
+    warnings: string[];
+  };
+  createdAt: string;
+};
+
+export type BodyProfile = BodyMeasurements & {
   photos: Partial<Record<BodySide, MediaRef>>;
+  calibration?: BodyCalibration;
   updatedAt: string;
 };
 

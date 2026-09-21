@@ -7,11 +7,13 @@ MIRRO is a local-first digital wardrobe and virtual try-on product. A person cap
 - No generative AI in the try-on pipeline.
 - Garment appearance must originate from the user's actual garment photos.
 - Deterministic processing is preferred: same inputs should produce the same result.
-- Body photos are sensitive personal media. The bootstrap MVP stores them only in the user's browser using IndexedDB; there is no server upload yet.
-- Current milestone is a 2D calibration engine. 3D body reconstruction and cloth simulation are future engine milestones, not claims of the current UI.
+- Body photos are sensitive personal media. The current product stores them only in the user's browser using IndexedDB; there is no server upload.
+- Body calibration now produces a coarse centimeter-based 3D collision hull from four classically segmented silhouettes plus explicit measurements.
+- The current BodyMesh uses weak-perspective normalization, not solved camera intrinsics or a final anatomical reconstruction.
+- Garment try-on is still a 2D approximation. Cloth simulation remains a future engine milestone and must not be presented as complete.
 
 ## MVP activation
 
-1. Save four body views and measurements.
+1. Save four body views and measurements and generate BodyMesh v1.
 2. Add at least one garment with front/back images and physical properties.
 3. Open Try-on, choose a garment, and adjust deterministic placement.

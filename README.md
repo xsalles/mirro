@@ -4,14 +4,17 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 
 ## Current milestone
 
-- 4-view body profile + measurements
+- 4-view body capture + real measurements
+- Classical connected-background silhouette extraction
+- Confidence-weighted multi-view calibration
+- Centimeter-based BodyMesh v1 (64 rings × 32 segments)
 - IndexedDB-only private local storage
 - Garment catalog with front/back photos
 - Classical flat-background removal in Canvas
 - Deterministic 2D garment placement + manual calibration
 - Responsive product shell
 
-The current try-on is an **MVP 2D approximation**, not a 3D cloth simulator. See `ARCHITECTURE.md` for the path to multi-view reconstruction and physical cloth simulation.
+The body pipeline now generates a **coarse 3D collision hull** locally. The garment try-on is still an **MVP 2D approximation**, not a cloth simulator. See `ARCHITECTURE.md` for the current camera model and the path to anatomical topology + physical cloth simulation.
 
 ## Development
 
@@ -32,4 +35,4 @@ npm run design:lint
 
 ## Privacy bootstrap
 
-Body and garment images are stored only in the browser's IndexedDB. No media upload API exists in this milestone.
+Body photos, silhouettes, BodyMesh and garment images are stored only in the browser's IndexedDB. No media upload API exists in this milestone.

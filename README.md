@@ -11,6 +11,7 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - Garment front/back alpha calibration from the user's real photos
 - Two-panel GarmentMesh generated from the real garment silhouette
 - XPBD structural / shear / bend / seam constraints
+- Web Worker simulation with main-thread fallback
 - BodyMesh collision, spatial-hash garment self-collision, damping, friction approximation and fabric presets
 - Interactive physical 3D beta preview with simulation progress
 - Real front/back garment textures warped over the solved UV mesh

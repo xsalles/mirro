@@ -181,8 +181,12 @@ export function buildGarmentMesh(params: {
         previousPositions[offset] = x;
         previousPositions[offset + 1] = y;
         previousPositions[offset + 2] = z;
-        uv[index * 2] = u;
-        uv[index * 2 + 1] = v;
+        uv[index * 2] =
+          (silhouette.bounds.x + u * Math.max(1, silhouette.bounds.width - 1)) /
+          silhouette.sourceWidth;
+        uv[index * 2 + 1] =
+          (silhouette.bounds.y + v * Math.max(1, silhouette.bounds.height - 1)) /
+          silhouette.sourceHeight;
       }
     }
   }

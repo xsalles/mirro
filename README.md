@@ -13,11 +13,12 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - XPBD structural / shear / bend / seam constraints
 - BodyMesh collision, damping, friction approximation and fabric presets
 - Interactive physical 3D beta preview with simulation progress
+- Real front/back garment textures warped over the solved UV mesh
 - Photo-based 2D fallback
 - IndexedDB-only private local storage
 - Responsive product shell
 
-The current **Físico 3D beta** is a genuine local cloth simulation, but it is not yet a photoreal final try-on. BodyMesh v1 merges limb topology, pants use a single two-panel envelope, garment self-collision is not implemented, and the 3D preview does not yet deform the real front/back garment textures. See `ARCHITECTURE.md`.
+The current **Físico 3D beta** is a genuine local cloth simulation, but it is not yet a photoreal final try-on. BodyMesh v1 merges limb topology, pants use a single two-panel envelope, garment self-collision is not implemented, and the Canvas renderer is not yet a PBR/photoreal renderer. See `ARCHITECTURE.md`.
 
 ## Development
 

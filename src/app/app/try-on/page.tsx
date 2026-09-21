@@ -77,6 +77,8 @@ export default function TryOnPage() {
     const currentBodyMesh = bodyMesh;
     const currentGarment = garment;
     if (!currentBodyMesh || !currentGarment || mode !== "physics") return;
+    const resolvedBodyMesh = currentBodyMesh;
+    const resolvedGarment = currentGarment;
 
     let active = true;
     let animationFrame = 0;
@@ -88,12 +90,12 @@ export default function TryOnPage() {
       setSimulationData(null);
 
       let calibration: GarmentCalibration;
-      if (currentGarment.calibration) {
-        calibration = currentGarment.calibration;
+      if (resolvedGarment.calibration) {
+        calibration = resolvedGarment.calibration;
       } else {
         const [frontBlob, backBlob] = await Promise.all([
-          loadMedia(currentGarment.images.front.key),
-          loadMedia(currentGarment.images.back.key),
+          loadMedia(resolvedGarment.images.front.key),
+          loadMedia(resolvedGarment.images.back.key),
         ]);
         if (!frontBlob || !backBlob) {
           throw new Error("As imagens desta peça não estão mais disponíveis neste navegador.");
@@ -104,11 +106,11 @@ export default function TryOnPage() {
       if (!active) return;
 
       const mesh = buildGarmentMesh({
-        garment: currentGarment,
+        garment: resolvedGarment,
         calibration,
-        bodyMesh: currentBodyMesh,
+        bodyMesh: resolvedBodyMesh,
       });
-      const material = clothMaterialForGarment(currentGarment);
+      const material = clothMaterialForGarment(resolvedGarment);
       const totalSteps = 144;
       const stepsPerFrame = 4;
       let currentStep = 0;
@@ -133,7 +135,7 @@ export default function TryOnPage() {
         ) {
           const result = simulateClothStep({
             mesh,
-            bodyMesh: currentBodyMesh,
+            bodyMesh: resolvedBodyMesh,
             material,
             dt: 1 / 60,
             iterations: 9,

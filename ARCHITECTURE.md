@@ -61,6 +61,7 @@ The local solver uses Verlet-style integration plus XPBD distance constraints:
 - collision thickness
 - approximate friction
 - BodyMesh collision every solver iteration
+- garment self-collision using a 3D spatial hash
 
 Garment metadata maps to material parameters:
 
@@ -71,7 +72,11 @@ The try-on runs 144 simulation steps in small `requestAnimationFrame` batches so
 
 ## Collision model — implemented
 
-At each cloth particle Y coordinate, MIRRO interpolates an elliptical BodyMesh cross-section. Particles that enter the expanded ellipse are projected back to its boundary, with garment thickness included in the collision radius. This is fast and deterministic, but inherits the BodyMesh v1 limitation: merged arm/leg volume instead of anatomical limb topology.
+At each cloth particle Y coordinate, MIRRO interpolates an elliptical BodyMesh cross-section. Particles that enter the expanded ellipse are projected back to its boundary, with garment thickness included in the collision radius.
+
+Garment self-collision uses a uniform 3D spatial hash whose cell size follows cloth collision thickness. Each particle checks only its 27 neighboring cells, and pairs already connected by structural, shear, bend or seam constraints are excluded. This avoids the O(n²) all-pairs path while preventing distant folds and opposite panels from occupying the same space.
+
+Both collision paths are deterministic, but body collision inherits the BodyMesh v1 limitation: merged arm/leg volume instead of anatomical limb topology.
 
 ## Rendering
 
@@ -92,7 +97,7 @@ The original photo-based 2D compositor remains as a fallback mode.
 - Separate BodyMesh torso, arms and left/right legs.
 - Add explicit camera calibration / capture fiducials for metric multi-view reconstruction.
 - Split garment topology by semantic regions (sleeves, torso, crotch, legs, waistband).
-- Add garment self-collision and collision against separate body limbs.
+- Add collision against separate anatomical body limbs once BodyMesh topology is split.
 - Move long-running cloth work to a Worker/WASM path when mesh density increases.
 - Add Three.js/WebGPU rendering with WebGL fallback where needed.
 

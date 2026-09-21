@@ -17,7 +17,7 @@
 - Garment alpha calibration is local metadata; XPBD mesh positions are runtime-only and are regenerated when the user changes garment or requests re-simulation.
 - No body or garment image is sent over the network in the current milestone.
 - Body calibration reports honest named stages.
-- XPBD uses determinate progress because the current solver runs a known 144-step budget.
+- XPBD uses determinate progress because the current solver runs a known 144-step budget. The preferred execution owner is a Web Worker; if worker startup fails, the same simulation contract falls back locally without changing user inputs.
 - Simulation errors keep the selected garment and expose an explicit retry.
 - Loading should keep layout stable; empty states explain the next action.
 - Product forms use `noValidate`; inline errors describe recovery and invalid fields expose `aria-invalid`.

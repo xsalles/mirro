@@ -30,7 +30,7 @@ function useMediaUrl(key?: string) {
     };
   }, [key]);
 
-  return media?.key === key ? media.url : null;
+  return media && media.key === key ? media.url : null;
 }
 
 export default function TryOnPage() {

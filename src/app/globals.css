@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+:root {
+  --canvas: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef0f5;
+  --ink: #111318;
+  --muted: #626875;
+  --line: #dfe2e8;
+  --thread: #5266ff;
+  --thread-soft: #dfe3ff;
+  --mint: #b9f1d2;
+  --danger: #d9473f;
+  --warning: #b56a00;
+  --radius-card: 16px;
+  --radius-control: 12px;
+}
+
+* { box-sizing: border-box; }
+html { color-scheme: light; scrollbar-color: #a7adba var(--canvas); scrollbar-width: thin; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-body), sans-serif; }
+::selection { background: var(--thread-soft); color: var(--ink); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--canvas); }
+*::-webkit-scrollbar-thumb { background: #a7adba; border: 3px solid var(--canvas); border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #7b8290; }
+.font-display { font-family: var(--font-display), sans-serif; }
+
+input, select, button { font: inherit; }
+input[type="number"], input[type="text"], select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: white;
+  padding: 0 12px;
+  color: var(--ink);
+  outline: none;
+}
+input:focus-visible, select:focus-visible { border-color: var(--thread); box-shadow: 0 0 0 3px var(--thread-soft); }
+input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+@media (forced-colors: active) {
+  * { scrollbar-color: auto; }
+}

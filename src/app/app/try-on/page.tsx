@@ -12,6 +12,7 @@ import { fitGarment } from "@/lib/mirro/fit";
 import { calibrateGarmentFromProcessedImages } from "@/lib/mirro/garment-image-processing";
 import { buildGarmentMesh, clothMaterialForGarment } from "@/lib/mirro/garment-mesh";
 import { simulateClothStep } from "@/lib/mirro/xpbd";
+import type { ClothWorkerResponse } from "@/lib/mirro/cloth-worker-protocol";
 import type { ClothMaterial, Garment, GarmentCalibration, GarmentMesh } from "@/lib/mirro/types";
 
 type PreviewMode = "physics" | "photo";
@@ -63,6 +64,7 @@ export default function TryOnPage() {
   const [simulationError, setSimulationError] = useState("");
   const [revision, setRevision] = useState(0);
   const [rerun, setRerun] = useState(0);
+  const [simulationEngine, setSimulationEngine] = useState<"worker" | "main" | null>(null);
 
   const garment: Garment | undefined = useMemo(
     () => state.garments.find((item) => item.id === selectedId) ?? state.garments[0],
@@ -83,12 +85,14 @@ export default function TryOnPage() {
 
     let active = true;
     let animationFrame = 0;
+    let simulationWorker: Worker | null = null;
 
     async function prepare() {
       setSimulationStatus("preparing");
       setSimulationProgress(0);
       setSimulationError("");
       setSimulationData(null);
+      setSimulationEngine(null);
 
       let calibration: GarmentCalibration;
       if (resolvedGarment.calibration) {
@@ -113,10 +117,8 @@ export default function TryOnPage() {
       });
       const material = clothMaterialForGarment(resolvedGarment);
       const totalSteps = 144;
-      const stepsPerFrame = 4;
-      let currentStep = 0;
-      let collisions = 0;
-      let selfCollisions = 0;
+      const dt = 1 / 60;
+      const iterations = 9;
 
       setSimulationData({
         mesh,
@@ -128,45 +130,123 @@ export default function TryOnPage() {
       setRevision((value) => value + 1);
       setSimulationStatus("simulating");
 
-      function tick() {
+      function runFallback() {
         if (!active) return;
+        setSimulationEngine("main");
+        let currentStep = 0;
+        let collisions = 0;
+        let selfCollisions = 0;
+        const stepsPerFrame = 2;
 
-        for (
-          let localStep = 0;
-          localStep < stepsPerFrame && currentStep < totalSteps;
-          localStep += 1
-        ) {
-          const result = simulateClothStep({
+        function tick() {
+          if (!active) return;
+
+          for (
+            let localStep = 0;
+            localStep < stepsPerFrame && currentStep < totalSteps;
+            localStep += 1
+          ) {
+            const result = simulateClothStep({
+              mesh,
+              bodyMesh: resolvedBodyMesh,
+              material,
+              dt,
+              iterations,
+            });
+            collisions += result.collisions;
+            selfCollisions += result.selfCollisions;
+            currentStep += 1;
+          }
+
+          setSimulationProgress(currentStep / totalSteps);
+          setSimulationData({
             mesh,
-            bodyMesh: resolvedBodyMesh,
             material,
-            dt: 1 / 60,
-            iterations: 9,
+            calibrationScore: calibration.quality.score,
+            collisions,
+            selfCollisions,
           });
-          collisions += result.collisions;
-          selfCollisions += result.selfCollisions;
-          currentStep += 1;
+          setRevision((value) => value + 1);
+
+          if (currentStep < totalSteps) {
+            animationFrame = requestAnimationFrame(tick);
+            return;
+          }
+
+          setSimulationStatus("ready");
         }
 
-        setSimulationProgress(currentStep / totalSteps);
-        setRevision((value) => value + 1);
+        animationFrame = requestAnimationFrame(tick);
+      }
 
-        if (currentStep < totalSteps) {
-          animationFrame = requestAnimationFrame(tick);
+      if (typeof Worker === "undefined") {
+        runFallback();
+        return;
+      }
+
+      setSimulationEngine("worker");
+      simulationWorker = new Worker(
+        new URL("../../../workers/cloth-simulation.worker.ts", import.meta.url),
+        { type: "module" },
+      );
+
+      simulationWorker.onmessage = (
+        event: MessageEvent<ClothWorkerResponse>,
+      ) => {
+        if (!active) return;
+        const message = event.data;
+
+        if (message.type === "progress") {
+          mesh.positions = message.positions;
+          setSimulationProgress(message.step / message.totalSteps);
+          setSimulationData({
+            mesh,
+            material,
+            calibrationScore: calibration.quality.score,
+            collisions: message.collisions,
+            selfCollisions: message.selfCollisions,
+          });
+          setRevision((value) => value + 1);
           return;
         }
 
-        setSimulationData({
-          mesh,
-          material,
-          calibrationScore: calibration.quality.score,
-          collisions,
-          selfCollisions,
-        });
-        setSimulationStatus("ready");
-      }
+        if (message.type === "done") {
+          setSimulationProgress(1);
+          setSimulationData({
+            mesh: message.mesh,
+            material,
+            calibrationScore: calibration.quality.score,
+            collisions: message.collisions,
+            selfCollisions: message.selfCollisions,
+          });
+          setRevision((value) => value + 1);
+          setSimulationStatus("ready");
+          simulationWorker?.terminate();
+          simulationWorker = null;
+          return;
+        }
 
-      animationFrame = requestAnimationFrame(tick);
+        setSimulationStatus("error");
+        setSimulationError(message.message);
+      };
+
+      simulationWorker.onerror = () => {
+        if (!active) return;
+        simulationWorker?.terminate();
+        simulationWorker = null;
+        runFallback();
+      };
+
+      simulationWorker.postMessage({
+        type: "start",
+        mesh,
+        bodyMesh: resolvedBodyMesh,
+        material,
+        steps: totalSteps,
+        dt,
+        iterations,
+        snapshotEvery: 12,
+      });
     }
 
     prepare().catch((error) => {
@@ -182,6 +262,7 @@ export default function TryOnPage() {
     return () => {
       active = false;
       cancelAnimationFrame(animationFrame);
+      simulationWorker?.terminate();
     };
   }, [bodyMesh, garment, mode, rerun]);
 
@@ -346,7 +427,7 @@ export default function TryOnPage() {
                     {simulationStatus === "ready"
                       ? "estabilizada"
                       : simulationStatus === "simulating"
-                        ? "calculando"
+                        ? simulationEngine === "worker" ? "worker" : "calculando"
                         : simulationStatus === "error"
                           ? "erro"
                           : "preparando"}

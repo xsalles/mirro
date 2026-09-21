@@ -11,8 +11,8 @@ MIRRO is a local-first digital wardrobe and virtual try-on product. A person cap
 - Body calibration produces a coarse centimeter-based 3D collision hull from four classically segmented silhouettes plus explicit measurements.
 - The current BodyMesh uses weak-perspective normalization, not solved camera intrinsics or a final anatomical reconstruction.
 - Garment calibration extracts alpha silhouettes from the processed front/back garment images.
-- The physical try-on now builds a two-panel GarmentMesh and runs an XPBD cloth solver with structural, shear, bend and seam constraints plus BodyMesh collision.
-- The 3D mode is a **physics beta**, not a photoreal final renderer. The processed front/back garment photos are already texture-mapped onto solved UV triangles; garment self-collision, PBR lighting and separate leg/arm topology are still pending.
+- The physical try-on builds a two-panel GarmentMesh and runs an XPBD cloth solver with structural, shear, bend and seam constraints, BodyMesh collision and garment self-collision. The solver runs in a Web Worker with a main-thread fallback.
+- The 3D mode is a **physics beta**, not a photoreal final renderer. The processed front/back garment photos are texture-mapped onto solved UV triangles, and a spatial-hash self-collision pass prevents non-neighbor cloth particles from intersecting. PBR lighting and separate leg/arm topology are still pending.
 - The original photo-based 2D compositor remains available as an honest fallback.
 
 ## MVP activation

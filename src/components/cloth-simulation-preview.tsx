@@ -178,33 +178,12 @@ export function ClothSimulationPreview({
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, width, height);
 
-    context.strokeStyle = line;
-    context.lineWidth = 1;
-    context.globalAlpha = 0.8;
+    const canTexture =
+      textured &&
+      frontTextureRef.current !== null &&
+      backTextureRef.current !== null;
 
-    for (let ring = 0; ring < bodyMesh.ringCount; ring += 4) {
-      context.beginPath();
-      for (let segment = 0; segment <= bodyMesh.segmentsPerRing; segment += 1) {
-        const normalized = segment % bodyMesh.segmentsPerRing;
-        const point = bodyPoint(ring * bodyMesh.segmentsPerRing + normalized);
-        if (segment === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
-      }
-      context.stroke();
-    }
-
-    context.globalAlpha = 0.38;
-    for (let segment = 0; segment < bodyMesh.segmentsPerRing; segment += 4) {
-      context.beginPath();
-      for (let ring = 0; ring < bodyMesh.ringCount; ring += 1) {
-        const point = bodyPoint(ring * bodyMesh.segmentsPerRing + segment);
-        if (ring === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
-      }
-      context.stroke();
-    }
-
-    const triangles: Array<{
+    const garmentTriangles: Array<{
       indices: [number, number, number];
       points: [Point2D, Point2D, Point2D];
       depth: number;
@@ -218,7 +197,7 @@ export function ClothSimulationPreview({
       const a = garmentPoint(ia);
       const b = garmentPoint(ib);
       const c = garmentPoint(ic);
-      triangles.push({
+      garmentTriangles.push({
         indices: [ia, ib, ic],
         points: [a, b, c],
         depth: (a.depth + b.depth + c.depth) / 3,
@@ -226,30 +205,108 @@ export function ClothSimulationPreview({
       });
     }
 
-    triangles.sort((a, b) => a.depth - b.depth);
-    const canTexture =
-      textured &&
-      frontTextureRef.current !== null &&
-      backTextureRef.current !== null;
+    if (canTexture) {
+      const sceneTriangles: Array<
+        | {
+            kind: "body";
+            points: [Point2D, Point2D, Point2D];
+            depth: number;
+          }
+        | {
+            kind: "garment";
+            indices: [number, number, number];
+            points: [Point2D, Point2D, Point2D];
+            depth: number;
+            panel: 0 | 1;
+          }
+      > = [];
 
-    for (const triangle of triangles) {
-      const texture =
-        triangle.panel === 0
-          ? frontTextureRef.current
-          : backTextureRef.current;
+      for (let offset = 0; offset < bodyMesh.indices.length; offset += 3) {
+        const a = bodyPoint(bodyMesh.indices[offset]);
+        const b = bodyPoint(bodyMesh.indices[offset + 1]);
+        const c = bodyPoint(bodyMesh.indices[offset + 2]);
+        sceneTriangles.push({
+          kind: "body",
+          points: [a, b, c],
+          depth: (a.depth + b.depth + c.depth) / 3,
+        });
+      }
 
-      if (canTexture && texture) {
+      for (const triangle of garmentTriangles) {
+        sceneTriangles.push({ kind: "garment", ...triangle });
+      }
+
+      sceneTriangles.sort((a, b) => a.depth - b.depth);
+
+      for (const triangle of sceneTriangles) {
+        if (triangle.kind === "body") {
+          context.beginPath();
+          context.moveTo(triangle.points[0].x, triangle.points[0].y);
+          context.lineTo(triangle.points[1].x, triangle.points[1].y);
+          context.lineTo(triangle.points[2].x, triangle.points[2].y);
+          context.closePath();
+          context.fillStyle = "#f8f9fb";
+          context.globalAlpha = 1;
+          context.fill();
+          context.strokeStyle = line;
+          context.lineWidth = 0.45;
+          context.globalAlpha = 0.28;
+          context.stroke();
+          continue;
+        }
+
+        const texture =
+          triangle.panel === 0
+            ? frontTextureRef.current
+            : backTextureRef.current;
+        if (!texture) continue;
+
         const source = triangle.indices.map((index) => ({
           x: garmentMesh.uv[index * 2] * texture.width,
           y: garmentMesh.uv[index * 2 + 1] * texture.height,
         }));
-        drawTexturedTriangle(
-          context,
-          texture,
-          source,
-          triangle.points,
-        );
-      } else {
+
+        context.globalAlpha = 1;
+        drawTexturedTriangle(context, texture, source, triangle.points);
+        context.beginPath();
+        context.moveTo(triangle.points[0].x, triangle.points[0].y);
+        context.lineTo(triangle.points[1].x, triangle.points[1].y);
+        context.lineTo(triangle.points[2].x, triangle.points[2].y);
+        context.closePath();
+        context.strokeStyle = thread;
+        context.lineWidth = 0.45;
+        context.globalAlpha = 0.055;
+        context.stroke();
+      }
+    } else {
+      context.strokeStyle = line;
+      context.lineWidth = 1;
+      context.globalAlpha = 0.8;
+
+      for (let ring = 0; ring < bodyMesh.ringCount; ring += 4) {
+        context.beginPath();
+        for (let segment = 0; segment <= bodyMesh.segmentsPerRing; segment += 1) {
+          const normalized = segment % bodyMesh.segmentsPerRing;
+          const point = bodyPoint(ring * bodyMesh.segmentsPerRing + normalized);
+          if (segment === 0) context.moveTo(point.x, point.y);
+          else context.lineTo(point.x, point.y);
+        }
+        context.stroke();
+      }
+
+      context.globalAlpha = 0.38;
+      for (let segment = 0; segment < bodyMesh.segmentsPerRing; segment += 4) {
+        context.beginPath();
+        for (let ring = 0; ring < bodyMesh.ringCount; ring += 1) {
+          const point = bodyPoint(ring * bodyMesh.segmentsPerRing + segment);
+          if (ring === 0) context.moveTo(point.x, point.y);
+          else context.lineTo(point.x, point.y);
+        }
+        context.stroke();
+      }
+
+      garmentTriangles.sort((a, b) => a.depth - b.depth);
+      for (const triangle of garmentTriangles) {
         context.beginPath();
         context.moveTo(triangle.points[0].x, triangle.points[0].y);
         context.lineTo(triangle.points[1].x, triangle.points[1].y);
@@ -258,17 +315,11 @@ export function ClothSimulationPreview({
         context.fillStyle = thread;
         context.globalAlpha = 0.085;
         context.fill();
+        context.strokeStyle = thread;
+        context.lineWidth = 0.55;
+        context.globalAlpha = 0.22;
+        context.stroke();
       }
-
-      context.beginPath();
-      context.moveTo(triangle.points[0].x, triangle.points[0].y);
-      context.lineTo(triangle.points[1].x, triangle.points[1].y);
-      context.lineTo(triangle.points[2].x, triangle.points[2].y);
-      context.closePath();
-      context.strokeStyle = thread;
-      context.lineWidth = 0.55;
-      context.globalAlpha = canTexture ? 0.075 : 0.22;
-      context.stroke();
     }
 
     context.globalAlpha = 1;
@@ -276,8 +327,8 @@ export function ClothSimulationPreview({
     context.font = "600 11px Manrope, sans-serif";
     context.textAlign = "right";
     context.fillText(
-      textured && canTexture
-        ? "textura real · deformada"
+      canTexture
+        ? "textura real · depth-sorted"
         : `${garmentMesh.positions.length / 3} partículas`,
       width - 14,
       20,
@@ -302,7 +353,7 @@ export function ClothSimulationPreview({
         className="aspect-[31/38] w-full bg-white"
       />
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        Durante o cálculo, o MIRRO mostra a malha física. Quando estabiliza, projeta as fotos reais de frente e costas sobre os UVs resolvidos.
+        Durante o cálculo, o MIRRO mostra a malha física. No resultado final, corpo e roupa são ordenados por profundidade e as fotos reais são projetadas sobre os UVs resolvidos.
       </figcaption>
     </figure>
   );

@@ -3,6 +3,13 @@ import type { BodyCalibration, BodyMeasurements, BodySide, BodySilhouette } from
 
 const MAX_PROCESSING_SIDE = 900;
 
+const SIDE_LABELS: Record<BodySide, string> = {
+  front: "frente",
+  right: "lateral direita",
+  back: "costas",
+  left: "lateral esquerda",
+};
+
 async function decodeForCalibration(blob: Blob): Promise<RgbaImage> {
   const bitmap = await createImageBitmap(blob);
   try {
@@ -33,9 +40,14 @@ export async function calibrateBodyFromPhotos(
 ): Promise<BodyCalibration> {
   const entries = await Promise.all(
     (Object.entries(photos) as Array<[BodySide, Blob]>).map(async ([side, blob]) => {
-      const image = await decodeForCalibration(blob);
-      const { silhouette } = segmentBodySilhouette(image);
-      return [side, silhouette] as const;
+      try {
+        const image = await decodeForCalibration(blob);
+        const { silhouette } = segmentBodySilhouette(image);
+        return [side, silhouette] as const;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Não foi possível segmentar a imagem.";
+        throw new Error(`${SIDE_LABELS[side]}: ${detail}`);
+      }
     }),
   );
 

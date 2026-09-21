@@ -70,6 +70,7 @@ export default function TryOnPage() {
 
   const bodyUrl = useMediaUrl(profile?.photos.front?.key);
   const garmentUrl = useMediaUrl(garment?.images.front.key);
+  const garmentBackUrl = useMediaUrl(garment?.images.back.key);
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
 
   useEffect(() => {
@@ -240,6 +241,9 @@ export default function TryOnPage() {
                 garmentMesh={simulationData.mesh}
                 revision={revision}
                 yawDegrees={yaw}
+                frontTextureUrl={garmentUrl}
+                backTextureUrl={garmentBackUrl}
+                textured={simulationStatus === "ready"}
               />
             ) : (
               <div className="grid aspect-[31/38] place-items-center bg-[var(--surface-2)] p-8 text-center">

@@ -7,6 +7,24 @@ import type {
   GarmentMesh,
 } from "./types";
 
+const connectedPairCache = new WeakMap<GarmentMesh, Set<string>>();
+
+function pairKey(a: number, b: number) {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+function connectedPairs(mesh: GarmentMesh) {
+  const cached = connectedPairCache.get(mesh);
+  if (cached) return cached;
+
+  const pairs = new Set<string>();
+  for (const constraint of mesh.constraints) {
+    pairs.add(pairKey(constraint.a, constraint.b));
+  }
+  connectedPairCache.set(mesh, pairs);
+  return pairs;
+}
+
 function complianceFor(kind: ClothConstraintKind, material: ClothMaterial) {
   if (kind === "structural") return material.stretchCompliance;
   if (kind === "shear") return material.shearCompliance;
@@ -107,6 +125,100 @@ function applyFrictionAfterCollision(
     (mesh.positions[offset + 2] - mesh.previousPositions[offset + 2]) * factor;
 }
 
+function hashCell(x: number, y: number, z: number) {
+  return `${x},${y},${z}`;
+}
+
+export function solveGarmentSelfCollisions(
+  mesh: GarmentMesh,
+  material: ClothMaterial,
+) {
+  const minimumDistance = Math.max(0.48, material.thicknessCm * 2.15);
+  const cellSize = minimumDistance;
+  const buckets = new Map<string, number[]>();
+  const particleCount = mesh.inverseMass.length;
+  const connected = connectedPairs(mesh);
+
+  for (let particle = 0; particle < particleCount; particle += 1) {
+    const offset = particle * 3;
+    const cellX = Math.floor(mesh.positions[offset] / cellSize);
+    const cellY = Math.floor(mesh.positions[offset + 1] / cellSize);
+    const cellZ = Math.floor(mesh.positions[offset + 2] / cellSize);
+    const key = hashCell(cellX, cellY, cellZ);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(particle);
+    else buckets.set(key, [particle]);
+  }
+
+  let collisions = 0;
+
+  for (let a = 0; a < particleCount; a += 1) {
+    const ao = a * 3;
+    const ax = mesh.positions[ao];
+    const ay = mesh.positions[ao + 1];
+    const az = mesh.positions[ao + 2];
+    const cellX = Math.floor(ax / cellSize);
+    const cellY = Math.floor(ay / cellSize);
+    const cellZ = Math.floor(az / cellSize);
+
+    for (let dzCell = -1; dzCell <= 1; dzCell += 1) {
+      for (let dyCell = -1; dyCell <= 1; dyCell += 1) {
+        for (let dxCell = -1; dxCell <= 1; dxCell += 1) {
+          const bucket = buckets.get(
+            hashCell(cellX + dxCell, cellY + dyCell, cellZ + dzCell),
+          );
+          if (!bucket) continue;
+
+          for (const b of bucket) {
+            if (b <= a || connected.has(pairKey(a, b))) continue;
+
+            const bo = b * 3;
+            let dx = mesh.positions[bo] - mesh.positions[ao];
+            let dy = mesh.positions[bo + 1] - mesh.positions[ao + 1];
+            let dz = mesh.positions[bo + 2] - mesh.positions[ao + 2];
+            let distance = Math.hypot(dx, dy, dz);
+            if (distance >= minimumDistance) continue;
+
+            if (distance < 1e-7) {
+              const axis = (a * 73856093 + b * 19349663) % 3;
+              dx = axis === 0 ? 1 : 0;
+              dy = axis === 1 ? 1 : 0;
+              dz = axis === 2 ? 1 : 0;
+              distance = 1;
+            }
+
+            const wa = mesh.inverseMass[a];
+            const wb = mesh.inverseMass[b];
+            const totalWeight = wa + wb;
+            if (totalWeight <= 0) continue;
+
+            const penetration = minimumDistance - distance;
+            const nx = dx / distance;
+            const ny = dy / distance;
+            const nz = dz / distance;
+            const correction = penetration / totalWeight;
+
+            if (wa > 0) {
+              mesh.positions[ao] -= nx * correction * wa;
+              mesh.positions[ao + 1] -= ny * correction * wa;
+              mesh.positions[ao + 2] -= nz * correction * wa;
+            }
+            if (wb > 0) {
+              mesh.positions[bo] += nx * correction * wb;
+              mesh.positions[bo + 1] += ny * correction * wb;
+              mesh.positions[bo + 2] += nz * correction * wb;
+            }
+
+            collisions += 1;
+          }
+        }
+      }
+    }
+  }
+
+  return collisions;
+}
+
 export function simulateClothStep(params: {
   mesh: GarmentMesh;
   bodyMesh: BodyMesh;
@@ -126,6 +238,7 @@ export function simulateClothStep(params: {
   for (const constraint of mesh.constraints) constraint.lambda = 0;
 
   let collisions = 0;
+  let selfCollisions = 0;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     for (let index = 0; index < mesh.constraints.length; index += 1) {
@@ -146,11 +259,16 @@ export function simulateClothStep(params: {
         applyFrictionAfterCollision(mesh, particle, material.friction);
       }
     }
+
+    if (iteration % 3 === 2 || iteration === iterations - 1) {
+      selfCollisions += solveGarmentSelfCollisions(mesh, material);
+    }
   }
 
   return {
     steps: 1,
     collisions,
+    selfCollisions,
     maxDisplacementCm,
   };
 }
@@ -164,6 +282,7 @@ export function simulateCloth(params: {
   iterations?: number;
 }): ClothSimulationStats {
   let collisions = 0;
+  let selfCollisions = 0;
   let maxDisplacementCm = 0;
 
   for (let step = 0; step < params.steps; step += 1) {
@@ -175,12 +294,14 @@ export function simulateCloth(params: {
       iterations: params.iterations,
     });
     collisions += result.collisions;
+    selfCollisions += result.selfCollisions;
     maxDisplacementCm = Math.max(maxDisplacementCm, result.maxDisplacementCm);
   }
 
   return {
     steps: params.steps,
     collisions,
+    selfCollisions,
     maxDisplacementCm,
   };
 }

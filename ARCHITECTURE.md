@@ -68,7 +68,7 @@ Garment metadata maps to material parameters:
 - **stretch level** controls structural/shear compliance
 - **fabric weight** controls bend compliance, damping and collision thickness
 
-The try-on runs 144 simulation steps in small `requestAnimationFrame` batches so the UI remains responsive and can show determinate progress.
+The try-on runs 144 simulation steps in a dedicated Web Worker. It sends bounded position snapshots back to the UI for determinate progress and preview refreshes. Browsers without Worker support fall back to small `requestAnimationFrame` batches.
 
 ## Collision model — implemented
 
@@ -98,7 +98,7 @@ The original photo-based 2D compositor remains as a fallback mode.
 - Add explicit camera calibration / capture fiducials for metric multi-view reconstruction.
 - Split garment topology by semantic regions (sleeves, torso, crotch, legs, waistband).
 - Add collision against separate anatomical body limbs once BodyMesh topology is split.
-- Move long-running cloth work to a Worker/WASM path when mesh density increases.
+- Move the Worker solver to WASM when mesh density or semantic garment topology increases substantially.
 - Add Three.js/WebGPU rendering with WebGL fallback where needed.
 
 ## Cloud boundary (future)

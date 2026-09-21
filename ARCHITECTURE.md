@@ -44,7 +44,7 @@ Legacy garments without calibration are recalibrated on demand from their stored
 - Each panel contains structural, shear and bend constraints.
 - Left/right edges receive seam constraints.
 - Tops, shirts and hoodies also receive shoulder seams with an unsewn center neck opening.
-- UV coordinates are generated for every particle so a future renderer can deform the real garment texture over the solved mesh.
+- UV coordinates are generated for every particle and mapped back to the calibrated source-image bounds.
 
 Current pants/shorts remain a **single envelope** around both legs because BodyMesh v1 does not yet separate left/right leg topology.
 
@@ -81,8 +81,9 @@ The physical preview currently uses a dependency-free Canvas 2D orthographic ren
 - depth-sorted GarmentMesh triangles
 - interactive yaw rotation
 - simulation diagnostics
+- affine per-triangle projection of the processed **real front/back garment textures** after the solver stabilizes
 
-This preview intentionally does **not** claim photorealism. UVs already exist for a later Three.js/WebGPU renderer that can apply the processed front/back garment textures.
+This preview intentionally does **not** claim photorealism. It deforms the real garment photos, but it does not yet provide PBR lighting, perspective-camera calibration, fabric shading or self-shadowing.
 
 The original photo-based 2D compositor remains as a fallback mode.
 
@@ -92,7 +93,6 @@ The original photo-based 2D compositor remains as a fallback mode.
 - Add explicit camera calibration / capture fiducials for metric multi-view reconstruction.
 - Split garment topology by semantic regions (sleeves, torso, crotch, legs, waistband).
 - Add garment self-collision and collision against separate body limbs.
-- Add texture deformation from the real front/back photos using the existing UVs.
 - Move long-running cloth work to a Worker/WASM path when mesh density increases.
 - Add Three.js/WebGPU rendering with WebGL fallback where needed.
 

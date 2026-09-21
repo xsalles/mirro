@@ -73,10 +73,7 @@ export default function TryOnPage() {
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
 
   useEffect(() => {
-    if (!bodyMesh || !garment || mode !== "physics") {
-      setSimulationStatus("idle");
-      return;
-    }
+    if (!bodyMesh || !garment || mode !== "physics") return;
 
     let active = true;
     let animationFrame = 0;

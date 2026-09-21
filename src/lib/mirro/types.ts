@@ -161,6 +161,7 @@ export type GarmentMesh = {
 export type ClothSimulationStats = {
   steps: number;
   collisions: number;
+  selfCollisions: number;
   maxDisplacementCm: number;
 };
 

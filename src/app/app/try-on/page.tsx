@@ -10,27 +10,27 @@ import { fitGarment } from "@/lib/mirro/fit";
 import type { Garment } from "@/lib/mirro/types";
 
 function useMediaUrl(key?: string) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [media, setMedia] = useState<{ key: string; url: string } | null>(null);
 
   useEffect(() => {
-    if (!key) {
-      setUrl(null);
-      return;
-    }
+    if (!key) return;
+
     let active = true;
     let objectUrl: string | null = null;
+
     loadMedia(key).then((blob) => {
       if (!blob || !active) return;
       objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
+      setMedia({ key, url: objectUrl });
     });
+
     return () => {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [key]);
 
-  return url;
+  return media?.key === key ? media.url : null;
 }
 
 export default function TryOnPage() {

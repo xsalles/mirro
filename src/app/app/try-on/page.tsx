@@ -48,13 +48,13 @@ export default function TryOnPage() {
   const garmentUrl = useMediaUrl(garment?.images.front.key);
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
 
-  if (!profile?.photos.front || state.garments.length === 0) {
+  if (!profile?.photos.front || !profile.calibration || state.garments.length === 0) {
     return (
       <div className="rounded-2xl border border-[var(--line)] bg-white p-8">
-        <h1 className="font-display text-4xl font-bold tracking-[-.045em]">Experimentar</h1>
-        <p className="mt-3 max-w-xl text-[var(--muted)]">Para abrir o provador, você precisa cadastrar o corpo e pelo menos uma peça.</p>
+        <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Experimentar</h1>
+        <p className="mt-3 max-w-xl text-[var(--muted)]">Para abrir o provador, você precisa gerar o BodyMesh do corpo e cadastrar pelo menos uma peça.</p>
         <div className="mt-6 flex flex-wrap gap-3">
-          <Link className="rounded-xl bg-[var(--ink)] px-4 py-3 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)]" href="/app/body">Cadastrar corpo</Link>
+          <Link className="rounded-xl bg-[var(--ink)] px-4 py-3 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)]" href="/app/body">Calibrar corpo</Link>
           <Link className="rounded-xl border border-[var(--line)] px-4 py-3 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)]" href="/app/wardrobe">Cadastrar peça</Link>
         </div>
       </div>
@@ -64,9 +64,9 @@ export default function TryOnPage() {
   return (
     <div className="space-y-7">
       <div>
-        <h1 className="font-display text-4xl font-bold tracking-[-.045em]">Experimentar</h1>
+        <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Experimentar</h1>
         <p className="mt-2 max-w-3xl text-[var(--muted)]">
-          Primeiro motor: remoção de fundo + escala geométrica por medidas. Os ajustes manuais abaixo corrigem a calibração sem alterar sua roupa original.
+          Seu BodyMesh já está calibrado em 3D. Esta tela ainda usa o compositor 2D da roupa; os controles abaixo ajustam apenas a visualização atual.
         </p>
       </div>
 
@@ -160,7 +160,7 @@ export default function TryOnPage() {
           </div>
 
           <div className="rounded-2xl bg-[var(--thread-soft)] p-5 text-sm leading-6">
-            <strong>O que ainda falta para o realismo final:</strong> reconstrução 3D do corpo, malha da peça e simulação de tecido/colisão. A arquitetura já mantém fotos e parâmetros separados para evoluir nessa direção.
+            <strong>O corpo já possui um hull 3D local.</strong> O próximo motor precisa transformar a roupa em malha e executar simulação física/colisão contra esse BodyMesh.
           </div>
         </aside>
       </div>

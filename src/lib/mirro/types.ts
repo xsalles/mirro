@@ -51,7 +51,7 @@ export type BodyMesh = {
 
 export type BodyCalibration = {
   version: 1;
-  method: "weak-perspective-visual-hull-v1";
+  method: "weak-perspective-elliptical-hull-v1";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   mesh: BodyMesh;

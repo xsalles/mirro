@@ -6,7 +6,7 @@
 - **Replace body view:** allows replacing one or more views. Any changed photo or measurement makes the previous calibration stale until the user explicitly recalibrates.
 - **Add garment:** validate name + two images, remove their backgrounds locally, calibrate front/back alpha silhouettes, persist media + calibration metadata, then clear only the new-item form.
 - **Delete garment:** is irreversible within the current local dataset. The delete affordance is explicit, scoped to one garment, and requires an app-owned confirmation naming the consequence.
-- **Physical try-on:** build a fresh runtime GarmentMesh from saved immutable garment calibration, then simulate locally. Never mutate source garment media or BodyMesh.
+- **Physical try-on:** build a fresh runtime GarmentMesh from saved immutable garment calibration, simulate locally, then project the saved front/back garment textures onto the solved UV triangles. Never mutate source garment media or BodyMesh.
 - **Legacy garment:** if a previously saved garment has no calibration metadata, derive calibration on demand from its stored processed PNGs.
 - **2D fallback:** remains available independently from the physical simulation and keeps its session-local position controls.
 

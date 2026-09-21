@@ -5,16 +5,19 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 ## Current milestone
 
 - 4-view body capture + real measurements
-- Classical connected-background silhouette extraction
-- Confidence-weighted multi-view calibration
+- Classical connected-background body silhouette extraction
+- Confidence-weighted multi-view body calibration
 - Centimeter-based BodyMesh v1 (64 rings × 32 segments)
+- Garment front/back alpha calibration from the user's real photos
+- Two-panel GarmentMesh generated from the real garment silhouette
+- XPBD structural / shear / bend / seam constraints
+- BodyMesh collision, damping, friction approximation and fabric presets
+- Interactive physical 3D beta preview with simulation progress
+- Photo-based 2D fallback
 - IndexedDB-only private local storage
-- Garment catalog with front/back photos
-- Classical flat-background removal in Canvas
-- Deterministic 2D garment placement + manual calibration
 - Responsive product shell
 
-The body pipeline now generates a **coarse 3D collision hull** locally. The garment try-on is still an **MVP 2D approximation**, not a cloth simulator. See `ARCHITECTURE.md` for the current camera model and the path to anatomical topology + physical cloth simulation.
+The current **Físico 3D beta** is a genuine local cloth simulation, but it is not yet a photoreal final try-on. BodyMesh v1 merges limb topology, pants use a single two-panel envelope, garment self-collision is not implemented, and the 3D preview does not yet deform the real front/back garment textures. See `ARCHITECTURE.md`.
 
 ## Development
 
@@ -35,4 +38,4 @@ npm run design:lint
 
 ## Privacy bootstrap
 
-Body photos, silhouettes, BodyMesh and garment images are stored only in the browser's IndexedDB. No media upload API exists in this milestone.
+Body photos, silhouettes, BodyMesh, garment photos, garment calibration and simulation inputs remain local to the browser. No media upload API exists in this milestone.

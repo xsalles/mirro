@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MediaImage } from "@/components/media-image";
 import { useMirro } from "@/components/mirro-provider";
+import { calibrateGarmentFromProcessedImages } from "@/lib/mirro/garment-image-processing";
 import { removeFlatBackground } from "@/lib/mirro/image-processing";
 import type { FabricWeight, Garment, GarmentCategory, MediaRef, StretchLevel } from "@/lib/mirro/types";
 import { validateImage } from "@/lib/mirro/validation";
@@ -57,6 +58,7 @@ export default function WardrobePage() {
         removeFlatBackground(front),
         removeFlatBackground(back),
       ]);
+      const calibration = await calibrateGarmentFromProcessedImages(frontBlob, backBlob);
       const id = crypto.randomUUID();
       const frontRef: MediaRef = {
         key: `garment:${id}:front`,
@@ -75,6 +77,7 @@ export default function WardrobePage() {
         ...form,
         name: form.name.trim(),
         images: { front: frontRef, back: backRef },
+        calibration,
         createdAt: new Date().toISOString(),
       };
       await addGarment(garment, [
@@ -86,7 +89,7 @@ export default function WardrobePage() {
       setBack(null);
     } catch {
       setErrors({
-        form: "Não foi possível processar a imagem. Tente uma foto com fundo mais uniforme.",
+        form: "Não foi possível calibrar a peça. Tente fotos mais esticadas, com fundo uniforme e enquadramento parecido entre frente e costas.",
       });
     } finally {
       setSaving(false);
@@ -96,7 +99,7 @@ export default function WardrobePage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="font-display text-4xl font-bold tracking-[-.045em]">Guarda-roupa</h1>
+        <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Guarda-roupa</h1>
         <p className="mt-2 max-w-2xl text-[var(--muted)]">
           Fotografe a peça esticada em uma superfície de cor uniforme. O MIRRO remove o fundo por diferença de cor — sem modelo de IA.
         </p>
@@ -215,6 +218,11 @@ export default function WardrobePage() {
                   <div>
                     <h3 className="font-semibold">{garment.name}</h3>
                     <p className="mt-1 text-sm text-[var(--muted)]">{CATEGORY_LABELS[garment.category]} · {garment.size}</p>
+                    {garment.calibration ? (
+                      <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
+                        forma calibrada · {Math.round(garment.calibration.quality.score * 100)}%
+                      </p>
+                    ) : null}
                   </div>
                   <button
                     type="button"

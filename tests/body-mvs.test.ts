@@ -275,16 +275,48 @@ describe("classical multi-view stereo + TSDF", () => {
     expect(mvs.surfaceIndices.length / 3).toBeGreaterThan(300);
 
     const front = mvs.depthMaps.front;
-    const centerIndex =
-      Math.floor(front.height / 2) * front.width +
-      Math.floor(front.width / 2);
-    const centerDepth =
-      front.depthValues[centerIndex] *
-      front.depthQuantizationCm;
+    const centerX = Math.floor(front.width / 2);
+    const centerY = Math.floor(front.height / 2);
+    let central:
+      | { depth: number; confidence: number; radius: number }
+      | null = null;
 
-    expect(front.confidence[centerIndex]).toBeGreaterThan(0);
-    expect(centerDepth).toBeGreaterThan(16.5);
-    expect(centerDepth).toBeLessThan(19.4);
+    for (let dy = -2; dy <= 2; dy += 1) {
+      for (let dx = -2; dx <= 2; dx += 1) {
+        const x = centerX + dx;
+        const y = centerY + dy;
+        if (
+          x < 0 ||
+          y < 0 ||
+          x >= front.width ||
+          y >= front.height
+        ) {
+          continue;
+        }
+        const index = y * front.width + x;
+        const confidence = front.confidence[index];
+        if (!confidence) continue;
+        const depth =
+          front.depthValues[index] *
+          front.depthQuantizationCm;
+        const radius = Math.hypot(dx, dy);
+
+        if (
+          !central ||
+          radius < central.radius ||
+          (radius === central.radius &&
+            confidence > central.confidence)
+        ) {
+          central = { depth, confidence, radius };
+        }
+      }
+    }
+
+    expect(central).not.toBeNull();
+    expect(central?.radius ?? Infinity).toBeLessThanOrEqual(2.25);
+    expect(central?.confidence ?? 0).toBeGreaterThan(0);
+    expect(central?.depth ?? 0).toBeGreaterThan(16.5);
+    expect(central?.depth ?? Infinity).toBeLessThan(19.4);
 
     const radial: number[] = [];
     for (

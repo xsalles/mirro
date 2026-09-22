@@ -642,8 +642,10 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 10
-                  ? "Bundle angular/tilt, pirâmide multi-resolução, SIMD numérico e TSDF concluídos no Worker quando disponível."
+                {calibration.version === 11
+                  ? "Bundle por features validado, frames ruins filtrados, depth edge-aware e TSDF concluídos; SIMD só é ativado quando o benchmark local justifica."
+                  : calibration.version === 10
+                    ? "Bundle angular/tilt, pirâmide multi-resolução, SIMD numérico e TSDF concluídos no Worker quando disponível."
                   : calibration.version === 9
                     ? "MVS robusto, subpixel, eixo compartilhado e TSDF concluídos fora da UI quando Worker está disponível."
                   : calibration.version === 8

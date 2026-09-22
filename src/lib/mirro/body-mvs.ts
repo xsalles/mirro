@@ -724,7 +724,7 @@ function createRawDepthMap(params: {
   bodyHeightCm: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 28;
+  const width = 32;
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
@@ -741,11 +741,13 @@ function createRawDepthMap(params: {
 
   const inwardOffsets = [
     0,
-    0.6,
-    1.2,
-    1.9,
-    2.8,
-    3.9,
+    0.35,
+    0.7,
+    1.1,
+    1.6,
+    2.2,
+    3,
+    4,
     5.2,
   ];
 

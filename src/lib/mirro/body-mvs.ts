@@ -975,6 +975,34 @@ function scoreCandidate(params: {
   );
 }
 
+export function parabolicSubpixelCorrection(
+  minusScore: number,
+  centerScore: number,
+  plusScore: number,
+  stepCm: number,
+) {
+  const curvature =
+    minusScore -
+    2 * centerScore +
+    plusScore;
+  if (
+    !Number.isFinite(curvature) ||
+    curvature >= -1e-4 ||
+    stepCm <= 0
+  ) {
+    return 0;
+  }
+
+  return clamp(
+    (0.5 *
+      stepCm *
+      (minusScore - plusScore)) /
+      curvature,
+    -stepCm,
+    stepCm,
+  );
+}
+
 function quantizeDepth(value: number) {
   return clamp(
     Math.round(value / DEPTH_QUANTIZATION_CM),
@@ -1143,20 +1171,15 @@ function createRawDepthMap(params: {
         minusScore !== null &&
         plusScore !== null
       ) {
-        const curvature =
-          minusScore -
-          2 * bestScore +
-          plusScore;
-
-        if (curvature < -1e-4) {
-          const correction = clamp(
-            (0.5 *
-              subpixelStepCm *
-              (minusScore - plusScore)) /
-              curvature,
-            -subpixelStepCm,
+        const correction =
+          parabolicSubpixelCorrection(
+            minusScore,
+            bestScore,
+            plusScore,
             subpixelStepCm,
           );
+
+        if (Math.abs(correction) > 0) {
           const refinedDepth = bestDepth + correction;
           const refinedScore = evaluateDepth(refinedDepth);
 

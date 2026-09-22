@@ -451,15 +451,33 @@ function buildTopMesh(
   material: ClothMaterial,
 ) {
   const category = garment.category;
-  const rows = category === "hoodie" ? 30 : 28;
+  const rows =
+    category === "hoodie" || category === "jacket"
+      ? 30
+      : 28;
   const cols = 16;
-  const ease = category === "hoodie" ? 1.18 : category === "shirt" ? 1.11 : 1.08;
+  const ease =
+    category === "jacket"
+      ? 1.2
+      : category === "hoodie"
+        ? 1.18
+        : category === "shirt"
+          ? 1.11
+          : 1.08;
   const shoulderRing =
     bodyMesh.landmarks.shoulderRing ?? Math.round(bodyMesh.ringCount * 0.18);
   const startY = bodyRingY(bodyMesh, shoulderRing) + bodyMesh.boundsCm.height * 0.018;
   const expectedHeight =
     bodyMesh.boundsCm.height *
-    (category === "hoodie" ? 0.42 : category === "shirt" ? 0.38 : 0.35);
+    (category === "jacket"
+      ? 0.44
+      : category === "hoodie"
+        ? 0.42
+        : category === "shirt"
+          ? 0.38
+          : category === "dress"
+            ? 0.31
+            : 0.35);
   const chestSection = getBodySectionAtY(
     bodyMesh,
     bodyRingY(bodyMesh, bodyMesh.landmarks.chestRing),
@@ -520,7 +538,9 @@ function buildTopMesh(
         return uvForBounds(
           silhouette,
           textureRange.min + (textureRange.max - textureRange.min) * u,
-          0.04 + v * 0.94,
+          category === "dress"
+            ? 0.03 + v * 0.43
+            : 0.04 + v * 0.94,
         );
       },
     });
@@ -563,10 +583,28 @@ function buildTopMesh(
   }
 
   const sleeveLengthFraction =
-    category === "hoodie" ? 0.94 : category === "shirt" ? 0.7 : 0.42;
-  const sleeveRows = category === "hoodie" ? 20 : 14;
+    garment.sleeveLength === "sleeveless"
+      ? 0
+      : garment.sleeveLength === "short"
+        ? 0.42
+        : garment.sleeveLength === "three-quarter"
+          ? 0.7
+          : garment.sleeveLength === "long"
+            ? 0.96
+            : category === "hoodie" || category === "jacket"
+              ? 0.96
+              : category === "shirt"
+                ? 0.7
+                : 0.42;
+  const sleeveRows =
+    sleeveLengthFraction > 0.8
+      ? 20
+      : sleeveLengthFraction > 0.55
+        ? 17
+        : 14;
   const sleeveCols = 7;
 
+  if (sleeveLengthFraction > 0) {
   for (const arm of ["left-arm", "right-arm"] as const) {
     const primitive = findLimb(bodyMesh, arm);
     if (!primitive) continue;
@@ -599,7 +637,11 @@ function buildTopMesh(
             u,
             front: side === 0,
             lengthFraction: sleeveLengthFraction,
-            ease: ease + (category === "hoodie" ? 0.08 : 0.03),
+            ease:
+              ease +
+              (category === "hoodie" || category === "jacket"
+                ? 0.08
+                : 0.03),
             thickness: material.thicknessCm,
           });
         },
@@ -607,7 +649,16 @@ function buildTopMesh(
           return uvForBounds(
             silhouette,
             outerMin + (outerMax - outerMin) * u,
-            0.02 + v * (category === "hoodie" ? 0.62 : 0.42),
+            category === "dress"
+              ? 0.02 + v * 0.34
+              : 0.02 +
+                v *
+                  (category === "hoodie" ||
+                  category === "jacket"
+                    ? 0.62
+                    : sleeveLengthFraction > 0.55
+                      ? 0.54
+                      : 0.42),
           );
         },
       });
@@ -664,8 +715,122 @@ function buildTopMesh(
       );
     }
   }
+  }
 
-  return { rows, cols };
+  return { rows, cols, handles };
+}
+
+function buildSkirtMesh(
+  context: MeshContext,
+  garment: Garment,
+  calibration: GarmentCalibration,
+  bodyMesh: BodyMesh,
+  material: ClothMaterial,
+) {
+  const isDress = garment.category === "dress";
+  const rows = isDress ? 28 : 24;
+  const cols = 16;
+  const waistY =
+    bodyRingY(
+      bodyMesh,
+      bodyMesh.landmarks.waistRing,
+    ) +
+    bodyMesh.boundsCm.height * 0.012;
+  const hipY = bodyRingY(
+    bodyMesh,
+    bodyMesh.landmarks.hipsRing,
+  );
+  const hip = getBodySectionAtY(bodyMesh, hipY);
+  const garmentHeight =
+    bodyMesh.boundsCm.height *
+    (isDress ? 0.45 : 0.37);
+  const ease = isDress ? 1.1 : 1.08;
+  const flare = isDress ? 0.14 : 0.22;
+  const handles: Record<string, RegionHandle> = {};
+
+  for (const side of [0, 1] as const) {
+    const silhouette =
+      side === 0 ? calibration.front : calibration.back;
+    const sign = side === 0 ? 1 : -1;
+    const kind: GarmentRegionKind = isDress
+      ? side === 0
+        ? "dress-skirt-front"
+        : "dress-skirt-back"
+      : side === 0
+        ? "skirt-front"
+        : "skirt-back";
+
+    handles[kind] = pushRegion({
+      context,
+      kind,
+      side,
+      rows,
+      cols,
+      position(v, u) {
+        const y = waistY - v * garmentHeight;
+        const widthRadius =
+          hip.radiusX *
+          ease *
+          (1 + flare * v);
+        const depthRadius =
+          hip.radiusZ *
+          ease *
+          (1 + flare * v * 0.45);
+        const x = (u - 0.5) * widthRadius * 2;
+        const normalizedX =
+          x / Math.max(widthRadius, 0.65);
+        const surface =
+          Math.abs(normalizedX) < 1
+            ? depthRadius *
+              Math.sqrt(
+                Math.max(
+                  0,
+                  1 - normalizedX * normalizedX,
+                ),
+              )
+            : depthRadius * 0.18;
+        return [
+          x,
+          y,
+          sign *
+            (surface +
+              material.thicknessCm * 2.4),
+        ];
+      },
+      texcoord(v, u) {
+        return uvForBounds(
+          silhouette,
+          u,
+          isDress
+            ? 0.42 + v * 0.56
+            : 0.02 + v * 0.96,
+        );
+      },
+    });
+  }
+
+  const frontKind = isDress
+    ? "dress-skirt-front"
+    : "skirt-front";
+  const backKind = isDress
+    ? "dress-skirt-back"
+    : "skirt-back";
+  seamColumns(
+    context,
+    handles[frontKind],
+    0,
+    handles[backKind],
+    0,
+  );
+  seamColumns(
+    context,
+    handles[frontKind],
+    cols - 1,
+    handles[backKind],
+    cols - 1,
+  );
+
+  return { rows, cols, handles };
 }
 
 function persistentSplitRatio(silhouette: GarmentSilhouette) {
@@ -938,15 +1103,81 @@ export function buildGarmentMesh(params: {
     particleInverseMass: material.particleInverseMass ?? 1,
   };
 
-  const grid =
-    garment.category === "pants" || garment.category === "shorts"
-      ? buildBottomMesh(context, garment, calibration, bodyMesh, material)
-      : buildTopMesh(context, garment, calibration, bodyMesh, material);
+  let grid: { rows: number; cols: number };
+
+  if (
+    garment.category === "pants" ||
+    garment.category === "shorts"
+  ) {
+    grid = buildBottomMesh(
+      context,
+      garment,
+      calibration,
+      bodyMesh,
+      material,
+    );
+  } else if (garment.category === "skirt") {
+    grid = buildSkirtMesh(
+      context,
+      garment,
+      calibration,
+      bodyMesh,
+      material,
+    );
+  } else if (garment.category === "dress") {
+    const top = buildTopMesh(
+      context,
+      garment,
+      calibration,
+      bodyMesh,
+      material,
+    );
+    const skirt = buildSkirtMesh(
+      context,
+      garment,
+      calibration,
+      bodyMesh,
+      material,
+    );
+    seamRows(
+      context,
+      top.handles["torso-front"],
+      top.rows - 1,
+      skirt.handles["dress-skirt-front"],
+      0,
+      0.09,
+    );
+    seamRows(
+      context,
+      top.handles["torso-back"],
+      top.rows - 1,
+      skirt.handles["dress-skirt-back"],
+      0,
+      0.09,
+    );
+    grid = {
+      rows: top.rows + skirt.rows,
+      cols: Math.max(top.cols, skirt.cols),
+    };
+  } else {
+    grid = buildTopMesh(
+      context,
+      garment,
+      calibration,
+      bodyMesh,
+      material,
+    );
+  }
 
   const frontVertexCount = context.textureSide.filter((side) => side === 0).length;
+  const advancedTopology =
+    garment.category === "dress" ||
+    garment.category === "skirt" ||
+    garment.category === "jacket" ||
+    garment.sleeveLength !== undefined;
 
   return {
-    version: 2,
+    version: advancedTopology ? 3 : 2,
     coordinateSystem: "x-right-y-up-z-front-centimeters",
     category: garment.category,
     rows: grid.rows,

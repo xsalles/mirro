@@ -9,6 +9,7 @@ import type {
   BodyMvsWorkerStartMessage,
 } from "../lib/mirro/body-mvs-worker-protocol";
 import type { BodyMultiViewStereo } from "../lib/mirro/types";
+import { initializeMvsSimdKernel } from "../lib/mirro/mvs-simd-kernel";
 
 const scope = self as DedicatedWorkerGlobalScope;
 
@@ -32,7 +33,7 @@ function transfersFor(
   return [...buffers];
 }
 
-scope.onmessage = (
+scope.onmessage = async (
   event: MessageEvent<BodyMvsWorkerStartMessage>,
 ) => {
   if (event.data.type !== "build") return;
@@ -46,17 +47,23 @@ scope.onmessage = (
   };
 
   try {
+    await initializeMvsSimdKernel();
+
     const result = buildClassicalMultiViewStereo({
       ...event.data.input,
+      targetDepthWidth:
+        event.data.input.targetDepthWidth ?? 42,
       diagnostics,
     });
 
     if (result) {
       result.executionBackend =
-        result.matchingKernel ===
-        "wasm-popcnt32-v1"
-          ? "worker-wasm"
-          : "worker-js";
+        result.numericKernel === "wasm-simd-v1"
+          ? "worker-wasm-simd"
+          : result.matchingKernel ===
+              "wasm-popcnt32-v1"
+            ? "worker-wasm"
+            : "worker-js";
     }
 
     const response: BodyMvsWorkerResponse = {

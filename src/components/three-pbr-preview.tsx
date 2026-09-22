@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  bodyAtlasUvs,
+  buildBodyTextureAtlas,
+} from "@/lib/mirro/body-texture-atlas";
 import type {
   BodyCalibration,
   BodyMesh,
@@ -22,8 +26,8 @@ type SceneRuntime = {
   backGeometry: InstanceType<ThreeModule["BufferGeometry"]>;
   frontMaterial: InstanceType<ThreeModule["MeshPhysicalMaterial"]>;
   backMaterial: InstanceType<ThreeModule["MeshPhysicalMaterial"]>;
-  bodyGeometries: Array<InstanceType<ThreeModule["BufferGeometry"]>>;
-  bodyMaterials: Array<InstanceType<ThreeModule["MeshPhysicalMaterial"]>>;
+  bodyGeometry: InstanceType<ThreeModule["BufferGeometry"]>;
+  bodyMaterial: InstanceType<ThreeModule["MeshPhysicalMaterial"]>;
   textures: Array<InstanceType<ThreeModule["Texture"]>>;
   resizeObserver: ResizeObserver;
 };
@@ -48,124 +52,6 @@ function indicesForSide(mesh: GarmentMesh, side: 0 | 1) {
 }
 
 
-function bodyTriangleSide(mesh: BodyMesh, triangleOffset: number): BodySide {
-  const ia = mesh.indices[triangleOffset];
-  const ib = mesh.indices[triangleOffset + 1];
-  const ic = mesh.indices[triangleOffset + 2];
-  const vertices = [ia, ib, ic];
-
-  let nx = 0;
-  let nz = 0;
-  let px = 0;
-  let pz = 0;
-
-  for (const vertex of vertices) {
-    nx += mesh.normals[vertex * 3] ?? 0;
-    nz += mesh.normals[vertex * 3 + 2] ?? 0;
-    px += mesh.vertices[vertex * 3] ?? 0;
-    pz += mesh.vertices[vertex * 3 + 2] ?? 0;
-  }
-
-  if (Math.abs(nx) + Math.abs(nz) < 0.08) {
-    nx = px / 3;
-    nz = pz / 3;
-  }
-
-  if (Math.abs(nz) >= Math.abs(nx)) return nz >= 0 ? "front" : "back";
-  return nx >= 0 ? "right" : "left";
-}
-
-function bodyIndicesForSide(mesh: BodyMesh, side: BodySide) {
-  const indices: number[] = [];
-  for (let offset = 0; offset < mesh.indices.length; offset += 3) {
-    if (bodyTriangleSide(mesh, offset) !== side) continue;
-    indices.push(
-      mesh.indices[offset],
-      mesh.indices[offset + 1],
-      mesh.indices[offset + 2],
-    );
-  }
-  return indices;
-}
-
-function bodyUvs(
-  mesh: BodyMesh,
-  calibration: BodyCalibration | undefined,
-  side: BodySide,
-) {
-  const silhouette = calibration?.silhouettes[side];
-  const uv = new Array<number>((mesh.vertices.length / 3) * 2).fill(0);
-  const halfHeight = mesh.boundsCm.height / 2;
-
-  for (let vertex = 0; vertex < mesh.vertices.length / 3; vertex += 1) {
-    const offset = vertex * 3;
-    const x = mesh.vertices[offset];
-    const y = mesh.vertices[offset + 1];
-    const z = mesh.vertices[offset + 2];
-    const vertical = Math.min(
-      1,
-      Math.max(0, (halfHeight - y) / Math.max(1, mesh.boundsCm.height)),
-    );
-
-    const profile = silhouette?.widthProfile;
-    const profilePosition = vertical * Math.max(0, (profile?.length ?? 1) - 1);
-    const profileLow = Math.floor(profilePosition);
-    const profileHigh = Math.min(
-      Math.max(0, (profile?.length ?? 1) - 1),
-      profileLow + 1,
-    );
-    const profileMix = profilePosition - profileLow;
-    const normalizedRowWidth = profile
-      ? (profile[profileLow] ?? 0) +
-        ((profile[profileHigh] ?? profile[profileLow] ?? 0) -
-          (profile[profileLow] ?? 0)) *
-          profileMix
-      : 1;
-    const rowPhysicalWidth =
-      silhouette?.metricWidthProfileCm
-        ? (silhouette.metricWidthProfileCm[profileLow] ?? mesh.boundsCm.width)
-        : Math.max(1, normalizedRowWidth * mesh.boundsCm.height);
-    const horizontalCoordinate =
-      side === "front"
-        ? -x
-        : side === "back"
-          ? x
-          : side === "right"
-            ? z
-            : -z;
-    const horizontal = Math.min(
-      1,
-      Math.max(
-        0,
-        0.5 + horizontalCoordinate / Math.max(1, rowPhysicalWidth),
-      ),
-    );
-
-    if (silhouette) {
-      const rowWidthPixels = Math.max(
-        1,
-        normalizedRowWidth * silhouette.bounds.height,
-      );
-      const centerX = silhouette.bounds.x + silhouette.bounds.width / 2;
-      const sourceX =
-        centerX + (horizontal - 0.5) * rowWidthPixels;
-      uv[vertex * 2] =
-        Math.min(
-          silhouette.sourceWidth - 1,
-          Math.max(0, sourceX),
-        ) / silhouette.sourceWidth;
-      uv[vertex * 2 + 1] =
-        (silhouette.bounds.y +
-          vertical * Math.max(1, silhouette.bounds.height - 1)) /
-        silhouette.sourceHeight;
-    } else {
-      uv[vertex * 2] = horizontal;
-      uv[vertex * 2 + 1] = vertical;
-    }
-  }
-
-  return uv;
-}
 
 function clothLook(
   weight: FabricWeight,
@@ -269,45 +155,57 @@ export function ThreePbrPreview({
         return texture;
       };
 
-      const bodyGeometries: Array<InstanceType<ThreeModule["BufferGeometry"]>> = [];
-      const bodyMaterials: Array<InstanceType<ThreeModule["MeshPhysicalMaterial"]>> = [];
+      const bodyGeometry = new THREE.BufferGeometry();
+      bodyGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(bodyMesh.vertices, 3),
+      );
+      bodyGeometry.setAttribute(
+        "normal",
+        new THREE.Float32BufferAttribute(bodyMesh.normals, 3),
+      );
+      bodyGeometry.setAttribute(
+        "uv",
+        new THREE.Float32BufferAttribute(
+          bodyAtlasUvs(bodyMesh.vertices, bodyMesh.boundsCm.height),
+          2,
+        ),
+      );
+      bodyGeometry.setIndex(bodyMesh.indices);
 
-      for (const side of ["front", "right", "back", "left"] as const) {
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute(
-          "position",
-          new THREE.Float32BufferAttribute(bodyMesh.vertices, 3),
-        );
-        geometry.setAttribute(
-          "normal",
-          new THREE.Float32BufferAttribute(bodyMesh.normals, 3),
-        );
-        geometry.setAttribute(
-          "uv",
-          new THREE.Float32BufferAttribute(
-            bodyUvs(bodyMesh, bodyCalibration, side),
-            2,
-          ),
-        );
-        geometry.setIndex(bodyIndicesForSide(bodyMesh, side));
-
-        const texture = loadTexture(bodyTextureUrls?.[side]);
-        const material = new THREE.MeshPhysicalMaterial({
-          map: texture,
-          color: texture ? 0xffffff : 0xc9b6aa,
-          roughness: 0.82,
-          metalness: 0,
-          sheen: 0.1,
-          sheenRoughness: 0.82,
-          side: THREE.DoubleSide,
-        });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        bodyGeometries.push(geometry);
-        bodyMaterials.push(material);
+      let bodyTexture: InstanceType<ThreeModule["Texture"]> | null = null;
+      if (bodyCalibration && bodyTextureUrls) {
+        try {
+          const atlas = await buildBodyTextureAtlas({
+            urls: bodyTextureUrls,
+            silhouettes: bodyCalibration.silhouettes,
+            textureCalibration: bodyCalibration.textureCalibration,
+          });
+          if (disposed) return;
+          const atlasTexture = new THREE.CanvasTexture(atlas);
+          atlasTexture.colorSpace = THREE.SRGBColorSpace;
+          atlasTexture.anisotropy = 8;
+          atlasTexture.wrapS = THREE.RepeatWrapping;
+          textures.push(atlasTexture);
+          bodyTexture = atlasTexture;
+        } catch {
+          bodyTexture = null;
+        }
       }
+
+      const bodyMaterial = new THREE.MeshPhysicalMaterial({
+        map: bodyTexture,
+        color: bodyTexture ? 0xffffff : 0xc9b6aa,
+        roughness: 0.82,
+        metalness: 0,
+        sheen: 0.1,
+        sheenRoughness: 0.82,
+        side: THREE.DoubleSide,
+      });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      group.add(body);
 
       const makeGarmentGeometry = (side: 0 | 1) => {
         const geometry = new THREE.BufferGeometry();
@@ -417,8 +315,8 @@ export function ThreePbrPreview({
         backGeometry,
         frontMaterial,
         backMaterial,
-        bodyGeometries,
-        bodyMaterials,
+        bodyGeometry,
+        bodyMaterial,
         textures,
         resizeObserver,
       };
@@ -442,10 +340,10 @@ export function ThreePbrPreview({
       runtime.resizeObserver.disconnect();
       runtime.frontGeometry.dispose();
       runtime.backGeometry.dispose();
-      for (const geometry of runtime.bodyGeometries) geometry.dispose();
+      runtime.bodyGeometry.dispose();
       runtime.frontMaterial.dispose();
       runtime.backMaterial.dispose();
-      for (const material of runtime.bodyMaterials) material.dispose();
+      runtime.bodyMaterial.dispose();
       for (const texture of runtime.textures) texture.dispose();
       runtime.renderer.dispose();
       host.replaceChildren();
@@ -507,7 +405,7 @@ export function ThreePbrPreview({
             : "Inicializando PBR…"}
       </div>
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        Corpo texturizado pelas quatro vistas, perspectiva, depth buffer e PBR do tecido. WebGPU é preferido; o renderer mantém fallback WebGL2.
+        Atlas corporal 360° com equalização de exposição e feather blending entre as quatro vistas, além de depth buffer e PBR do tecido.
       </figcaption>
     </figure>
   );

@@ -160,8 +160,11 @@ function evaluate(
   let squaredResidual = 0;
   let featureSquaredResidual = 0;
   let featureWeight = 0;
-  let verticalCovariance = 0;
-  let verticalVariance = 0;
+  let verticalWeight = 0;
+  let verticalXSum = 0;
+  let verticalYSum = 0;
+  let verticalXYSum = 0;
+  let verticalXXSum = 0;
   const perViewResidualCm: Partial<Record<BodyViewId, number>> = {};
 
   for (const view of views) {
@@ -198,9 +201,13 @@ function evaluate(
       viewSquared += dx * dx + dy * dy;
       viewCount += 2;
 
-      verticalCovariance +=
+      verticalWeight += frameWeight;
+      verticalXSum +=
+        frameWeight * sample.bodyYcm;
+      verticalYSum += frameWeight * dy;
+      verticalXYSum +=
         frameWeight * sample.bodyYcm * dy;
-      verticalVariance +=
+      verticalXXSum +=
         frameWeight *
         sample.bodyYcm *
         sample.bodyYcm;
@@ -256,10 +263,20 @@ function evaluate(
         ? Math.sqrt(featureSquaredResidual / featureWeight)
         : 0,
     perViewResidualCm,
-    verticalResidualSlopeCmPerCm:
-      verticalVariance > 1e-8
-        ? verticalCovariance / verticalVariance
-        : 0,
+    verticalResidualSlopeCmPerCm: (() => {
+      if (verticalWeight <= 1e-8) return 0;
+      const centeredCovariance =
+        verticalXYSum -
+        (verticalXSum * verticalYSum) /
+          verticalWeight;
+      const centeredVariance =
+        verticalXXSum -
+        (verticalXSum * verticalXSum) /
+          verticalWeight;
+      return centeredVariance > 1e-8
+        ? centeredCovariance / centeredVariance
+        : 0;
+    })(),
   };
 }
 

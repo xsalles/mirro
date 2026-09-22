@@ -1,7 +1,13 @@
+import { buildSignedDistanceField } from "./signed-distance-field";
+import {
+  BODY_VIEW_ANGLE_DEG,
+  BODY_VIEW_ANGLE_RAD,
+  BODY_VIEW_SEQUENCE,
+} from "./body-views";
 import type {
   BodyMesh,
-  BodySide,
   BodySilhouette,
+  BodyViewId,
   BodyVisualHull,
 } from "./types";
 
@@ -12,8 +18,6 @@ type ViewMask = {
   width: number;
   height: number;
 };
-
-const SIDES: BodySide[] = ["front", "right", "back", "left"];
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -133,14 +137,12 @@ function maskContains(
 }
 
 function horizontalCoordinate(
-  side: BodySide,
+  view: BodyViewId,
   x: number,
   z: number,
 ) {
-  if (side === "front") return x;
-  if (side === "back") return -x;
-  if (side === "right") return -z;
-  return z;
+  const angle = BODY_VIEW_ANGLE_RAD[view];
+  return x * Math.cos(angle) - z * Math.sin(angle);
 }
 
 function metricSpanAt(
@@ -502,11 +504,19 @@ function extractSurface(params: {
 }
 
 export function buildBodyVisualHull(params: {
-  views: Record<BodySide, ViewMask>;
-  silhouettes: Record<BodySide, BodySilhouette>;
+  views: Partial<Record<BodyViewId, ViewMask>>;
+  silhouettes: Partial<Record<BodyViewId, BodySilhouette>>;
   baseMesh: BodyMesh;
   bodyHeightCm: number;
 }): BodyVisualHull {
+  const activeViews = BODY_VIEW_SEQUENCE.filter(
+    (view) => params.views[view] && params.silhouettes[view],
+  );
+  if (activeViews.length < 4) {
+    throw new Error(
+      "O visual hull precisa de pelo menos quatro vistas válidas.",
+    );
+  }
   const bounds = meshBounds(params.baseMesh);
   const margin = Math.max(1.5, params.bodyHeightCm * 0.009);
   const origin: Vec3 = [
@@ -537,8 +547,8 @@ export function buildBodyVisualHull(params: {
   ];
   const occupancy = new Uint8Array(nx * ny * nz);
   const rowCache = Object.fromEntries(
-    SIDES.map((side) => [
-      side,
+    activeViews.map((view) => [
+      view,
       Array.from({ length: ny }, (_, y) => {
         const worldY = origin[1] + y * step[1];
         const t = clamp(
@@ -549,12 +559,12 @@ export function buildBodyVisualHull(params: {
         return {
           t,
           extent: rowExtent(
-            params.views[side],
-            params.silhouettes[side],
+            params.views[view]!,
+            params.silhouettes[view]!,
             t,
           ),
           metricSpan: metricSpanAt(
-            params.silhouettes[side],
+            params.silhouettes[view]!,
             t,
             params.bodyHeightCm,
           ),
@@ -562,7 +572,7 @@ export function buildBodyVisualHull(params: {
       }),
     ]),
   ) as Record<
-    BodySide,
+    BodyViewId,
     Array<{
       t: number;
       extent: ReturnType<typeof rowExtent>;
@@ -579,14 +589,14 @@ export function buildBodyVisualHull(params: {
         const worldX = origin[0] + x * step[0];
         let inside = true;
 
-        for (const side of SIDES) {
-          const row = rowCache[side][y];
+        for (const view of activeViews) {
+          const row = rowCache[view][y];
           if (!row.extent || row.metricSpan <= 0) {
             inside = false;
             break;
           }
           const h = horizontalCoordinate(
-            side,
+            view,
             worldX,
             worldZ,
           );
@@ -596,7 +606,7 @@ export function buildBodyVisualHull(params: {
 
           if (
             !maskContains(
-              params.views[side],
+              params.views[view]!,
               pixelX,
               row.extent.y,
               1,
@@ -617,7 +627,7 @@ export function buildBodyVisualHull(params: {
 
   if (occupiedVoxelCount < 80) {
     throw new Error(
-      "O visual hull ficou vazio ou instável. Mantenha o celular fixo e gire o corpo no mesmo ponto nas quatro fotos.",
+      "O visual hull ficou vazio ou instável. Mantenha o celular fixo e gire o corpo no mesmo ponto entre as vistas.",
     );
   }
 
@@ -636,22 +646,40 @@ export function buildBodyVisualHull(params: {
     );
   }
 
+  const resolution = { x: nx, y: ny, z: nz };
+  const signedDistanceField = buildSignedDistanceField({
+    occupancy,
+    resolution,
+    originCm: origin,
+    stepCm: step,
+    maxDistanceCm: Math.max(30, params.bodyHeightCm * 0.22),
+  });
+  const isEightView = activeViews.length >= 8;
+
   return {
-    version: 1,
-    method: "four-view-turntable-marching-tetrahedra-v1",
+    version: isEightView ? 2 : 1,
+    method: isEightView
+      ? "eight-view-turntable-marching-tetrahedra-v2"
+      : "four-view-turntable-marching-tetrahedra-v1",
     captureMode: "fixed-camera-person-turntable",
-    resolution: { x: nx, y: ny, z: nz },
+    resolution,
     boundsCm: {
       width,
       height,
       depth,
     },
     originCm: origin,
+    gridStepCm: step,
     voxelSizeCm: (step[0] + step[1] + step[2]) / 3,
+    viewCount: isEightView ? 8 : 4,
+    viewAnglesDeg: activeViews.map(
+      (view) => BODY_VIEW_ANGLE_DEG[view],
+    ),
     occupiedVoxelCount,
     occupancyRle: encodeRle(occupancy),
     vertices: surface.vertices,
     normals: surface.normals,
     indices: surface.indices,
+    signedDistanceField,
   };
 }

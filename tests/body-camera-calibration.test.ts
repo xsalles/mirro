@@ -4,7 +4,10 @@ import {
   detectBodyViewCalibration,
 } from "../src/lib/mirro/body-camera-calibration";
 import type { RgbaImage } from "../src/lib/mirro/body-calibration";
-import { solveBodyCameraRig } from "../src/lib/mirro/camera-rig";
+import {
+  rectifySilhouetteWithPinhole,
+  solveBodyCameraRig,
+} from "../src/lib/mirro/camera-rig";
 import type {
   BodySide,
   BodySilhouette,
@@ -174,6 +177,58 @@ function syntheticView(
     markerCenters,
   };
 }
+
+
+describe("pinhole silhouette rectification", () => {
+  it("converts pixel widths through the inverse target homography", () => {
+    const silhouette: BodySilhouette = {
+      sourceWidth: 300,
+      sourceHeight: 400,
+      bounds: { x: 50, y: 100, width: 100, height: 200 },
+      widthProfile: [0.5, 0.5, 0.5],
+      foregroundRatio: 0.25,
+      backgroundThreshold: 40,
+      confidence: 0.95,
+      metricWidthProfileCm: [10, 10, 10],
+      metricBodyHeightCm: 20,
+    };
+    const calibration: BodyViewCalibration = {
+      method: "mirro-a4-pinhole-v2",
+      pixelsPerCm: 10,
+      rollRadians: 0,
+      perspectiveSkew: 0,
+      score: 1,
+      imageWidth: 300,
+      imageHeight: 400,
+      homography: [
+        10, 0, 100,
+        0, 10, 200,
+        0, 0, 1,
+      ],
+      targetBounds: { x: 21, y: 77, width: 158, height: 245 },
+      markerCenters: {
+        magenta: [21, 77],
+        cyan: [179, 77],
+        yellow: [21, 322],
+        blue: [179, 322],
+      },
+    };
+
+    const rectified = rectifySilhouetteWithPinhole(
+      silhouette,
+      calibration,
+    );
+
+    expect(rectified.metricWidthProfileCm).toEqual(
+      expect.arrayContaining([
+        expect.closeTo(10, 1),
+        expect.closeTo(10, 1),
+        expect.closeTo(10, 1),
+      ]),
+    );
+    expect(rectified.metricBodyHeightCm).toBeCloseTo(20, 0);
+  });
+});
 
 describe("shared pinhole camera rig", () => {
   it("refines shared intrinsics and per-view extrinsics from four target views", () => {

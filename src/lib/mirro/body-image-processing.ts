@@ -4,6 +4,7 @@ import {
   type RgbaImage,
 } from "./body-calibration";
 import { buildBodyVisualHull } from "./body-visual-hull";
+import { refineVisualHullPhotometrically } from "./body-photometric-refinement";
 import {
   BODY_VIEW_LABEL,
   BODY_VIEW_SEQUENCE,
@@ -369,6 +370,27 @@ export async function calibrateBodyFromPhotos(
         baseMesh: base.mesh,
         bodyHeightCm: measurements.heightCm,
       });
+
+      if (visualHull.viewCount === 8) {
+        visualHull = refineVisualHullPhotometrically({
+          hull: visualHull,
+          baseMesh: base.mesh,
+          images: Object.fromEntries(
+            workingEntries.map((entry) => [
+              entry.side,
+              entry.image,
+            ]),
+          ) as Partial<Record<BodyViewId, RgbaImage>>,
+          masks: Object.fromEntries(
+            workingEntries.map((entry) => [
+              entry.side,
+              entry.mask,
+            ]),
+          ) as Partial<Record<BodyViewId, Uint8Array>>,
+          silhouettes: denseSilhouettes,
+          bodyHeightCm: measurements.heightCm,
+        });
+      }
     } catch (error) {
       visualHullWarning =
         error instanceof Error

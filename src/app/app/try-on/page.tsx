@@ -92,6 +92,9 @@ export default function TryOnPage() {
   }, [profile]);
 
   const bodyUrl = useMediaUrl(profile?.photos.front?.key);
+  const bodyRightUrl = useMediaUrl(profile?.photos.right?.key);
+  const bodyBackUrl = useMediaUrl(profile?.photos.back?.key);
+  const bodyLeftUrl = useMediaUrl(profile?.photos.left?.key);
   const garmentUrl = useMediaUrl(garment?.images.front.key);
   const garmentBackUrl = useMediaUrl(garment?.images.back.key);
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
@@ -356,7 +359,15 @@ export default function TryOnPage() {
                   yawDegrees={yaw}
                   frontTextureUrl={garmentUrl}
                   backTextureUrl={garmentBackUrl}
+                  bodyCalibration={profile.calibration}
+                  bodyTextureUrls={{
+                    front: bodyUrl,
+                    right: bodyRightUrl,
+                    back: bodyBackUrl,
+                    left: bodyLeftUrl,
+                  }}
                   fabricWeight={garment?.fabricWeight ?? "medium"}
+                  fabricProfile={garment?.physicalProfile}
                 />
               ) : (
                 <ClothSimulationPreview

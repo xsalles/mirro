@@ -14,7 +14,10 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
 
     const mesh = calibration.mesh;
     const surface = mesh.visualHull;
-    const surfaceVertices = surface?.vertices ?? mesh.vertices;
+    const surfaceVertices =
+      surface?.photometricRefinement?.surfaceVertices ??
+      surface?.vertices ??
+      mesh.vertices;
     const surfaceIndices = surface?.indices ?? mesh.indices;
     const width = canvas.width;
     const height = canvas.height;

@@ -24,9 +24,11 @@ function markMainBackend(
 ) {
   if (!result) return result;
   result.executionBackend =
-    result.matchingKernel === "wasm-popcnt32-v1"
-      ? "main-wasm"
-      : "main-js";
+    result.numericKernel === "wasm-simd-v1"
+      ? "main-wasm-simd"
+      : result.matchingKernel === "wasm-popcnt32-v1"
+        ? "main-wasm"
+        : "main-js";
   return result;
 }
 
@@ -50,6 +52,8 @@ export async function buildClassicalMultiViewStereoAsync(
       result: markMainBackend(
         buildClassicalMultiViewStereo({
           ...input,
+          targetDepthWidth:
+            input.targetDepthWidth ?? 30,
           diagnostics: state,
         }),
       ),
@@ -76,6 +80,8 @@ export async function buildClassicalMultiViewStereoAsync(
         result: markMainBackend(
           buildClassicalMultiViewStereo({
             ...input,
+            targetDepthWidth:
+              input.targetDepthWidth ?? 30,
             diagnostics: state,
           }),
         ),

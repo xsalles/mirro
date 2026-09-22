@@ -179,11 +179,25 @@ If optics are unavailable or image aspect ratio does not match, the solver delib
 
 This is classical MVS, not generative reconstruction. It is still more constrained than general PatchMatch MVS: the camera is fixed, the person rotates in known 45° steps, depth hypotheses are bounded by the visual hull, and motion/specular/textureless regions may fall back to v7.
 
+## Robust MVS compute v9
+
+V9 keeps the v8 conservative geometry contract but changes how depth is selected and where it runs:
+
+1. each candidate patch is scored by a weighted combination of positive ZNCC, Census bit agreement and gradient-magnitude similarity;
+2. Census Hamming distance uses a tiny WebAssembly `i32.popcnt` microkernel when WebAssembly is present, with a bit-twiddling JavaScript fallback;
+3. depth first searches five bounded coarse hypotheses inside the visual hull, then evaluates only the two local neighbors around the winner;
+4. a concave three-sample parabola refines the best depth continuously below the discrete search interval; stored depth remains quantized to 0.05 cm;
+5. the eight perspective camera estimates are regularized together: camera distance and vertical optical offset use robust medians, while one least-squares X/Z turntable-axis center explains the per-view horizontal offsets;
+6. the complete MVS → cross-view consistency → TSDF → surface extraction stage runs in a dedicated Web Worker when supported. Result depth/TSDF typed-array buffers are transferred back to the main thread;
+7. browsers without Worker or WebAssembly retain deterministic local fallbacks.
+
+The WASM claim is intentionally narrow: only the Census popcount hot path is currently native WebAssembly. ZNCC, gradient matching, depth regularization, cross-view filtering and TSDF remain TypeScript executed inside the Worker. A future full WASM/SIMD port should be benchmark-driven rather than implied today.
+
 ## Engine roadmap
 
-- Refine the turntable camera center/extrinsics jointly across all eight views instead of estimating distance independently from body height.
-- Add coarse-to-fine/subpixel depth hypotheses and stronger robust patch costs (Census/gradient terms) for weak texture.
-- Move MVS/TSDF generation into a Worker/WASM path when mobile scan latency justifies the transfer cost.
+- Refine the turntable model beyond the v9 shared center into a full robust bundle over angle error, axis tilt and per-frame pose residuals.
+- Port the remaining robust patch cost + TSDF hot loops to WASM SIMD after collecting mobile timing data; v9 currently uses Worker orchestration plus a WASM Census popcount microkernel.
+- Add an image-pyramid cost volume and edge-aware depth upsampling if higher source resolution materially improves verified surface error.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
 - Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.

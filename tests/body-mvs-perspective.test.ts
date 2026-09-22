@@ -330,9 +330,26 @@ describe("calibrated perspective turntable MVS", () => {
       );
     }
 
+    expect(mvs.version).toBe(2);
     expect(mvs.projectionModel).toBe(
       "calibrated-turntable-perspective",
     );
+    expect(mvs.matchingModel).toBe(
+      "zncc-census-gradient",
+    );
+    expect(mvs.depthRefinement).toBe(
+      "coarse-to-fine-parabolic",
+    );
+    expect(mvs.turntableRig?.optimized).toBe(true);
+    expect(
+      Math.hypot(
+        mvs.turntableRig?.axisCenterCm[0] ?? 99,
+        mvs.turntableRig?.axisCenterCm[2] ?? 99,
+      ),
+    ).toBeLessThan(0.6);
+    expect(
+      mvs.turntableRig?.centerResidualCm ?? 99,
+    ).toBeLessThan(0.6);
     expect(mvs.meanCameraDistanceCm).toBeGreaterThan(166);
     expect(mvs.meanCameraDistanceCm).toBeLessThan(174);
     expect(mvs.validDepthCount).toBeGreaterThan(350);

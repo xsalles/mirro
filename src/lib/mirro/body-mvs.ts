@@ -5,6 +5,10 @@ import {
 } from "./body-views";
 import { sampleSignedDistance } from "./signed-distance-field";
 import { scaleOpticalIntrinsics } from "./optical-calibration";
+import {
+  censusHamming32,
+  getCensusPopcountKernel,
+} from "./mvs-wasm-kernel";
 import type {
   BodyDepthMap,
   BodyMultiViewStereo,
@@ -30,6 +34,7 @@ type MvsView = {
   mask: Uint8Array;
   silhouette: BodySilhouette;
   luminance: Float32Array;
+  gradient: Float32Array;
   camera?: TurntableCamera;
 };
 
@@ -64,6 +69,39 @@ function buildLuminance(image: RgbaImage) {
       image.data[offset + 2] * 0.0722;
   }
   return output;
+}
+
+function buildGradientMagnitude(
+  luminance: Float32Array,
+  width: number,
+  height: number,
+) {
+  const output = new Float32Array(width * height);
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const gx =
+        (luminance[y * width + x + 1] -
+          luminance[y * width + x - 1]) *
+        0.5;
+      const gy =
+        (luminance[(y + 1) * width + x] -
+          luminance[(y - 1) * width + x]) *
+        0.5;
+      output[y * width + x] = Math.hypot(gx, gy);
+    }
+  }
+
+  return output;
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const ordered = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2
+    ? ordered[middle]
+    : (ordered[middle - 1] + ordered[middle]) / 2;
 }
 
 function calibratedCameraForView(params: {
@@ -134,6 +172,112 @@ function calibratedCameraForView(params: {
       ((bodyCenterY - intrinsics.cy) *
         referenceCameraDepth) /
       Math.max(1e-6, intrinsics.fy),
+  };
+}
+
+type OptimizedTurntableRig = {
+  cameras: Record<BodyViewId, TurntableCamera>;
+  metadata: NonNullable<
+    BodyMultiViewStereo["turntableRig"]
+  >;
+};
+
+function optimizeTurntableCameras(
+  candidates: Record<
+    BodyViewId,
+    TurntableCamera | undefined
+  >,
+): OptimizedTurntableRig | undefined {
+  if (
+    !BODY_VIEW_SEQUENCE.every((view) =>
+      Boolean(candidates[view]),
+    )
+  ) {
+    return undefined;
+  }
+
+  const resolved = candidates as Record<
+    BodyViewId,
+    TurntableCamera
+  >;
+  const sharedDistanceCm = median(
+    BODY_VIEW_SEQUENCE.map(
+      (view) => resolved[view].distanceCm,
+    ),
+  );
+  const verticalOpticalOffsetCm = median(
+    BODY_VIEW_SEQUENCE.map(
+      (view) => resolved[view].verticalOffsetCm,
+    ),
+  );
+
+  let suu = 0;
+  let suv = 0;
+  let svv = 0;
+  let suh = 0;
+  let svh = 0;
+
+  for (const view of BODY_VIEW_SEQUENCE) {
+    const angle = BODY_VIEW_ANGLE_RAD[view];
+    const u = Math.cos(angle);
+    const v = -Math.sin(angle);
+    const h = resolved[view].horizontalOffsetCm;
+    suu += u * u;
+    suv += u * v;
+    svv += v * v;
+    suh += u * h;
+    svh += v * h;
+  }
+
+  const determinant = suu * svv - suv * suv;
+  let axisX = 0;
+  let axisZ = 0;
+
+  if (Math.abs(determinant) > 1e-7) {
+    axisX = (suh * svv - svh * suv) / determinant;
+    axisZ = (svh * suu - suh * suv) / determinant;
+  }
+
+  axisX = clamp(axisX, -8, 8);
+  axisZ = clamp(axisZ, -8, 8);
+
+  let squaredResidual = 0;
+  const cameras = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const angle = BODY_VIEW_ANGLE_RAD[view];
+      const predictedHorizontal =
+        axisX * Math.cos(angle) -
+        axisZ * Math.sin(angle);
+      const residual =
+        resolved[view].horizontalOffsetCm -
+        predictedHorizontal;
+      squaredResidual += residual * residual;
+
+      return [
+        view,
+        {
+          ...resolved[view],
+          distanceCm: sharedDistanceCm,
+          horizontalOffsetCm: predictedHorizontal,
+          verticalOffsetCm: verticalOpticalOffsetCm,
+        },
+      ];
+    }),
+  ) as Record<BodyViewId, TurntableCamera>;
+
+  return {
+    cameras,
+    metadata: {
+      version: 1,
+      method: "shared-axis-center-least-squares-v1",
+      optimized: true,
+      axisCenterCm: [axisX, 0, axisZ],
+      sharedCameraDistanceCm: sharedDistanceCm,
+      verticalOpticalOffsetCm,
+      centerResidualCm: Math.sqrt(
+        squaredResidual / BODY_VIEW_SEQUENCE.length,
+      ),
+    },
   };
 }
 
@@ -550,7 +694,7 @@ const PATCH_OFFSETS = [
   [2, 2],
 ] as const;
 
-function patchZncc(params: {
+function robustPatchScore(params: {
   referenceView: BodyViewId;
   targetView: BodyViewId;
   reference: MvsView;
@@ -560,8 +704,72 @@ function patchZncc(params: {
   centerPixelY: number;
   candidateDepthCm: number;
 }) {
+  const referenceCenterCoordinate =
+    pixelToViewCoordinates(
+      params.reference,
+      params.bodyHeightCm,
+      params.centerPixelX,
+      params.centerPixelY,
+      params.candidateDepthCm,
+    );
+  const centerWorld = viewCoordinatesToWorld(
+    params.referenceView,
+    referenceCenterCoordinate.horizontalCm,
+    referenceCenterCoordinate.y,
+    params.candidateDepthCm,
+  );
+  const targetCenter = worldToPixel(
+    params.targetView,
+    params.target,
+    params.bodyHeightCm,
+    centerWorld[0],
+    centerWorld[1],
+    centerWorld[2],
+  );
+
+  if (
+    !maskContains(
+      params.reference,
+      params.centerPixelX,
+      params.centerPixelY,
+    ) ||
+    !maskContains(
+      params.target,
+      targetCenter.x,
+      targetCenter.y,
+    )
+  ) {
+    return null;
+  }
+
+  const refCenter = bilinear(
+    params.reference.luminance,
+    params.reference.image.width,
+    params.reference.image.height,
+    params.centerPixelX,
+    params.centerPixelY,
+  );
+  const targetCenterValue = bilinear(
+    params.target.luminance,
+    params.target.image.width,
+    params.target.image.height,
+    targetCenter.x,
+    targetCenter.y,
+  );
+  if (
+    refCenter === null ||
+    targetCenterValue === null
+  ) {
+    return null;
+  }
+
   const refValues: number[] = [];
   const targetValues: number[] = [];
+  let refCensus = 0;
+  let targetCensus = 0;
+  let censusBits = 0;
+  let gradientSimilaritySum = 0;
+  let gradientSamples = 0;
 
   for (const [dx, dy] of PATCH_OFFSETS) {
     const refX = params.centerPixelX + dx;
@@ -616,13 +824,53 @@ function patchZncc(params: {
       projected.x,
       projected.y,
     );
-
     if (a === null || b === null) continue;
+
     refValues.push(a);
     targetValues.push(b);
+
+    const refGradient = bilinear(
+      params.reference.gradient,
+      params.reference.image.width,
+      params.reference.image.height,
+      refX,
+      refY,
+    );
+    const targetGradient = bilinear(
+      params.target.gradient,
+      params.target.image.width,
+      params.target.image.height,
+      projected.x,
+      projected.y,
+    );
+    if (
+      refGradient !== null &&
+      targetGradient !== null
+    ) {
+      gradientSimilaritySum +=
+        1 -
+        Math.abs(refGradient - targetGradient) /
+          (refGradient + targetGradient + 18);
+      gradientSamples += 1;
+    }
+
+    if (
+      (dx !== 0 || dy !== 0) &&
+      censusBits < 31
+    ) {
+      if (a >= refCenter) {
+        refCensus |= 1 << censusBits;
+      }
+      if (b >= targetCenterValue) {
+        targetCensus |= 1 << censusBits;
+      }
+      censusBits += 1;
+    }
   }
 
-  if (refValues.length < 6) return null;
+  if (refValues.length < 6 || censusBits < 5) {
+    return null;
+  }
 
   let meanA = 0;
   let meanB = 0;
@@ -648,8 +896,36 @@ function patchZncc(params: {
   const denominator = Math.sqrt(
     varianceA * varianceB,
   );
-  if (denominator < 80) return null;
-  return clamp(covariance / denominator, -1, 1);
+  const zncc =
+    denominator > 36
+      ? clamp(covariance / denominator, -1, 1)
+      : 0;
+  const censusSimilarity =
+    1 -
+    censusHamming32(refCensus, targetCensus) /
+      Math.max(1, censusBits);
+  const gradientSimilarity =
+    gradientSamples > 0
+      ? clamp(
+          gradientSimilaritySum / gradientSamples,
+          0,
+          1,
+        )
+      : 0;
+
+  const textureEnergy = Math.sqrt(
+    varianceA / Math.max(1, refValues.length),
+  );
+  const robustScore =
+    Math.max(0, zncc) * 0.58 +
+    censusSimilarity * 0.27 +
+    gradientSimilarity * 0.15;
+
+  return clamp(
+    robustScore * (textureEnergy < 2.5 ? 0.78 : 1),
+    0,
+    1,
+  );
 }
 
 function scoreCandidate(params: {
@@ -660,43 +936,70 @@ function scoreCandidate(params: {
   pixelY: number;
   depthCm: number;
 }) {
-  const correlations: number[] = [];
+  const scores: number[] = [];
 
   const evaluate = (offsets: number[]) => {
     for (const targetView of neighborViews(
       params.referenceView,
       offsets,
     )) {
-      const correlation = patchZncc({
+      const score = robustPatchScore({
         referenceView: params.referenceView,
         targetView,
-        reference: params.views[params.referenceView],
+        reference:
+          params.views[params.referenceView],
         target: params.views[targetView],
         bodyHeightCm: params.bodyHeightCm,
         centerPixelX: params.pixelX,
         centerPixelY: params.pixelY,
         candidateDepthCm: params.depthCm,
       });
-      if (correlation !== null) {
-        correlations.push(correlation);
-      }
+      if (score !== null) scores.push(score);
     }
   };
 
   evaluate([-1, 1]);
-  if (correlations.length < 2) {
+  if (scores.length < 2) {
     evaluate([-2, 2]);
   }
 
-  if (correlations.length < 2) return null;
-  correlations.sort((a, b) => b - a);
-  const selected = correlations.slice(
+  if (scores.length < 2) return null;
+  scores.sort((a, b) => b - a);
+  const selected = scores.slice(
     0,
-    Math.min(3, correlations.length),
+    Math.min(3, scores.length),
   );
   return (
     selected.reduce((sum, value) => sum + value, 0) /
     selected.length
+  );
+}
+
+export function parabolicSubpixelCorrection(
+  minusScore: number,
+  centerScore: number,
+  plusScore: number,
+  stepCm: number,
+) {
+  const curvature =
+    minusScore -
+    2 * centerScore +
+    plusScore;
+  if (
+    !Number.isFinite(curvature) ||
+    curvature >= -1e-4 ||
+    stepCm <= 0
+  ) {
+    return 0;
+  }
+
+  return clamp(
+    (0.5 *
+      stepCm *
+      (minusScore - plusScore)) /
+      curvature,
+    -stepCm,
+    stepCm,
   );
 }
 
@@ -738,18 +1041,17 @@ function createRawDepthMap(params: {
   const confidence = new Uint8Array(width * height);
   let validCount = 0;
   let confidenceSum = 0;
+  let subpixelRefinedCount = 0;
+  let subpixelOffsetSum = 0;
 
-  const inwardOffsets = [
+  const coarseOffsets = [
     0,
-    0.35,
-    0.7,
-    1.1,
-    1.6,
-    2.2,
-    3,
+    1.2,
+    2.6,
     4,
     5.2,
   ];
+  const maxInwardCm = 5.6;
 
   for (let gy = 0; gy < height; gy += 1) {
     const pixelY =
@@ -776,12 +1078,15 @@ function createRawDepthMap(params: {
       });
       if (hullDepth === null) continue;
 
-      let bestDepth = hullDepth;
-      let bestCorrelation = -Infinity;
-      let secondCorrelation = -Infinity;
+      const evaluateDepth = (candidateDepth: number) => {
+        if (
+          candidateDepth > hullDepth + 1e-6 ||
+          candidateDepth <
+            hullDepth - maxInwardCm - 1e-6
+        ) {
+          return null;
+        }
 
-      for (const inward of inwardOffsets) {
-        const candidateDepth = hullDepth - inward;
         const coordinate = pixelToViewCoordinates(
           reference,
           params.bodyHeightCm,
@@ -805,10 +1110,10 @@ function createRawDepthMap(params: {
             world[2],
           ) > 0.3
         ) {
-          continue;
+          return null;
         }
 
-        const correlation = scoreCandidate({
+        return scoreCandidate({
           referenceView: params.view,
           views: params.views,
           bodyHeightCm: params.bodyHeightCm,
@@ -816,28 +1121,93 @@ function createRawDepthMap(params: {
           pixelY,
           depthCm: candidateDepth,
         });
-        if (correlation === null) continue;
+      };
 
-        if (correlation > bestCorrelation) {
-          secondCorrelation = bestCorrelation;
-          bestCorrelation = correlation;
-          bestDepth = candidateDepth;
-        } else if (correlation > secondCorrelation) {
-          secondCorrelation = correlation;
+      const coarse: Array<{
+        depth: number;
+        score: number;
+      }> = [];
+
+      for (const inward of coarseOffsets) {
+        const depth = hullDepth - inward;
+        const score = evaluateDepth(depth);
+        if (score !== null) {
+          coarse.push({ depth, score });
         }
       }
 
-      if (!Number.isFinite(bestCorrelation)) continue;
-      const margin = Number.isFinite(secondCorrelation)
-        ? bestCorrelation - secondCorrelation
-        : 0.12;
-      if (bestCorrelation < 0.2 || margin < 0.012) {
+      if (coarse.length < 2) continue;
+      coarse.sort((a, b) => b.score - a.score);
+      const ambiguityMargin =
+        coarse[0].score - coarse[1].score;
+
+      let bestDepth = coarse[0].depth;
+      let bestScore = coarse[0].score;
+
+      const fineDepths = [
+        bestDepth - 0.42,
+        bestDepth + 0.42,
+      ];
+
+      for (const depth of fineDepths) {
+        const score = evaluateDepth(depth);
+        if (score !== null && score > bestScore) {
+          bestDepth = depth;
+          bestScore = score;
+        }
+      }
+
+      const subpixelStepCm = 0.16;
+      const minusScore = evaluateDepth(
+        bestDepth - subpixelStepCm,
+      );
+      const plusScore = evaluateDepth(
+        bestDepth + subpixelStepCm,
+      );
+
+      if (
+        minusScore !== null &&
+        plusScore !== null
+      ) {
+        const correction =
+          parabolicSubpixelCorrection(
+            minusScore,
+            bestScore,
+            plusScore,
+            subpixelStepCm,
+          );
+
+        if (Math.abs(correction) > 0) {
+          const refinedDepth = bestDepth + correction;
+          const refinedScore = evaluateDepth(refinedDepth);
+
+          if (
+            refinedScore !== null &&
+            refinedScore >= bestScore - 0.004
+          ) {
+            bestDepth = refinedDepth;
+            bestScore = Math.max(
+              bestScore,
+              refinedScore,
+            );
+            if (Math.abs(correction) >= 0.015) {
+              subpixelRefinedCount += 1;
+              subpixelOffsetSum += Math.abs(correction);
+            }
+          }
+        }
+      }
+
+      if (
+        bestScore < 0.42 ||
+        ambiguityMargin < 0.01
+      ) {
         continue;
       }
 
       const confidenceValue = clamp(
-        ((bestCorrelation - 0.15) / 0.75) * 0.72 +
-          (margin / 0.16) * 0.28,
+        ((bestScore - 0.35) / 0.6) * 0.76 +
+          (ambiguityMargin / 0.15) * 0.24,
         0,
         1,
       );
@@ -854,8 +1224,8 @@ function createRawDepthMap(params: {
   }
 
   return {
-    version: 1,
-    method: "turntable-zncc-plane-sweep-v1",
+    version: 2,
+    method: "turntable-robust-coarse-to-fine-v2",
     view: params.view,
     width,
     height,
@@ -866,6 +1236,11 @@ function createRawDepthMap(params: {
     meanConfidence: validCount
       ? confidenceSum / validCount
       : 0,
+    subpixelRefinedCount,
+    meanSubpixelOffsetCm:
+      subpixelRefinedCount > 0
+        ? subpixelOffsetSum / subpixelRefinedCount
+        : 0,
   };
 }
 
@@ -1649,7 +2024,7 @@ export type MultiViewStereoDiagnostics = {
     | "insufficient-surface";
 };
 
-export function buildClassicalMultiViewStereo(params: {
+export type BodyMvsBuildInput = {
   hull: BodyVisualHull;
   images: Record<BodyViewId, RgbaImage>;
   masks: Record<BodyViewId, Uint8Array>;
@@ -1657,7 +2032,11 @@ export function buildClassicalMultiViewStereo(params: {
   bodyHeightCm: number;
   optics?: OpticalCalibrationProfile;
   diagnostics?: MultiViewStereoDiagnostics;
-}): BodyMultiViewStereo | null {
+};
+
+export function buildClassicalMultiViewStereo(
+  params: BodyMvsBuildInput,
+): BodyMultiViewStereo | null {
   if (params.diagnostics) {
     params.diagnostics.validDepthCount = 0;
     params.diagnostics.meanConfidence = 0;
@@ -1697,22 +2076,34 @@ export function buildClassicalMultiViewStereo(params: {
   const usePerspective = BODY_VIEW_SEQUENCE.every(
     (view) => Boolean(cameraCandidates[view]),
   );
+  const optimizedRig = usePerspective
+    ? optimizeTurntableCameras(cameraCandidates)
+    : undefined;
+  const activeCameras =
+    optimizedRig?.cameras ?? cameraCandidates;
 
   const views = Object.fromEntries(
-    BODY_VIEW_SEQUENCE.map((view) => [
-      view,
-      {
-        image: params.images[view],
-        mask: params.masks[view],
-        silhouette: params.silhouettes[view],
-        luminance: buildLuminance(
-          params.images[view],
-        ),
-        camera: usePerspective
-          ? cameraCandidates[view]
-          : undefined,
-      },
-    ]),
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const image = params.images[view];
+      const luminance = buildLuminance(image);
+      return [
+        view,
+        {
+          image,
+          mask: params.masks[view],
+          silhouette: params.silhouettes[view],
+          luminance,
+          gradient: buildGradientMagnitude(
+            luminance,
+            image.width,
+            image.height,
+          ),
+          camera: usePerspective
+            ? activeCameras[view]
+            : undefined,
+        },
+      ];
+    }),
   ) as Record<BodyViewId, MvsView>;
 
   const depthMaps = Object.fromEntries(
@@ -1744,11 +2135,14 @@ export function buildClassicalMultiViewStereo(params: {
 
   let validDepthCount = 0;
   let confidenceSum = 0;
+  let subpixelRefinedCount = 0;
   for (const view of BODY_VIEW_SEQUENCE) {
     const map = depthMaps[view];
     validDepthCount += map.validCount;
     confidenceSum +=
       map.meanConfidence * map.validCount;
+    subpixelRefinedCount +=
+      map.subpixelRefinedCount ?? 0;
   }
 
   const meanConfidence = validDepthCount
@@ -1800,20 +2194,40 @@ export function buildClassicalMultiViewStereo(params: {
     if (weight > 0) fusedVoxelCount += 1;
   }
 
+  const matchingKernel =
+    getCensusPopcountKernel().backend;
+
   return {
-    version: 1,
-    method: "turntable-zncc-tsdf-v1",
+    version: 2,
+    method: "turntable-robust-subpixel-tsdf-v2",
     projectionModel: usePerspective
       ? "calibrated-turntable-perspective"
       : "metric-orthographic",
     meanCameraDistanceCm: usePerspective
-      ? BODY_VIEW_SEQUENCE.reduce(
-          (sum, view) =>
-            sum +
-            (cameraCandidates[view]?.distanceCm ?? 0),
-          0,
-        ) / BODY_VIEW_SEQUENCE.length
+      ? optimizedRig?.metadata.sharedCameraDistanceCm ??
+        median(
+          BODY_VIEW_SEQUENCE.map(
+            (view) =>
+              cameraCandidates[view]?.distanceCm ?? 0,
+          ),
+        )
       : undefined,
+    matchingModel: "zncc-census-gradient",
+    depthRefinement: "coarse-to-fine-parabolic",
+    matchingKernel,
+    executionBackend:
+      matchingKernel === "wasm-popcnt32-v1"
+        ? "main-wasm"
+        : "main-js",
+    subpixelRefinedCount,
+    turntableRig:
+      optimizedRig?.metadata ?? {
+        version: 1,
+        method: "shared-axis-center-least-squares-v1",
+        optimized: false,
+        axisCenterCm: [0, 0, 0],
+        centerResidualCm: 0,
+      },
     depthMaps,
     tsdf,
     surfaceVertices: surface.vertices,

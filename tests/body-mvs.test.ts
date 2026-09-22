@@ -282,7 +282,22 @@ describe("classical multi-view stereo + TSDF", () => {
       );
     }
 
+    expect(mvs.version).toBe(2);
+    expect(mvs.method).toBe(
+      "turntable-robust-subpixel-tsdf-v2",
+    );
     expect(mvs.projectionModel).toBe("metric-orthographic");
+    expect(mvs.matchingModel).toBe(
+      "zncc-census-gradient",
+    );
+    expect(mvs.depthRefinement).toBe(
+      "coarse-to-fine-parabolic",
+    );
+    expect(mvs.matchingKernel).toBe(
+      "wasm-popcnt32-v1",
+    );
+    expect(mvs.executionBackend).toBe("main-wasm");
+    expect(mvs.turntableRig?.optimized).toBe(false);
     expect(mvs.validDepthCount).toBeGreaterThan(500);
     expect(mvs.meanConfidence).toBeGreaterThan(0.18);
     expect(mvs.crossViewConsistency).toBeGreaterThan(0.2);

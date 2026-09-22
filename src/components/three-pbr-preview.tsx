@@ -435,9 +435,12 @@ export function ThreePbrPreview({
             : "Inicializando PBR…"}
       </div>
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        {bodyCalibration?.version === 8 &&
+        {bodyCalibration?.version === 9 &&
         bodyMesh.visualHull?.multiViewStereo
-          ? "MVS v8: depth maps ZNCC + consistência cruzada + TSDF fusionado, atlas Poisson e PBR."
+          ? "MVS v9: robust matching + subpixel + eixo compartilhado, TSDF fusionado, atlas Poisson e PBR."
+          : bodyCalibration?.version === 8 &&
+              bodyMesh.visualHull?.multiViewStereo
+            ? "MVS v8: depth maps ZNCC + consistência cruzada + TSDF fusionado, atlas Poisson e PBR."
           : bodyCalibration?.version === 7 &&
               bodyMesh.visualHull?.signedDistanceField
             ? "8-view hull + SDF 3D + atlas multibanda com screened-Poisson, depth buffer e PBR do tecido."

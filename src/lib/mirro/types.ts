@@ -129,6 +129,50 @@ export type BodySilhouette = {
   viewCalibration?: BodyViewCalibration;
 };
 
+export type OpticalCalibrationFrame = {
+  id: string;
+  calibration: BodyViewCalibration;
+  extrinsics: CameraExtrinsics;
+  reprojectionErrorPx: number;
+};
+
+export type OpticalCalibrationProfile = {
+  version: 1;
+  method: "multi-frame-brown-conrady-v1";
+  intrinsics: CameraIntrinsics;
+  distortion: LensDistortion;
+  frameCount: number;
+  imageWidth: number;
+  imageHeight: number;
+  rmsReprojectionErrorPx: number;
+  conditionScore: number;
+  iterations: number;
+  frames: OpticalCalibrationFrame[];
+  warnings: string[];
+  createdAt: string;
+};
+
+export type BodyVisualHull = {
+  version: 1;
+  method: "four-view-turntable-marching-tetrahedra-v1";
+  captureMode: "fixed-camera-person-turntable";
+  resolution: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  boundsCm: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+  voxelSizeCm: number;
+  occupiedVoxelCount: number;
+  vertices: number[];
+  normals: number[];
+  indices: number[];
+};
+
 export type BodyPartKind =
   | "head"
   | "torso"
@@ -203,16 +247,18 @@ export type BodyMesh = {
   torsoBottomRing?: number;
   parts?: BodyPartMesh[];
   collisionPrimitives?: BodyCollisionPrimitive[];
+  visualHull?: BodyVisualHull;
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
     | "metric-target-anatomical-v3"
     | "pinhole-bundle-anatomical-v4"
-    | "lens-undistorted-local-color-surface-v5";
+    | "lens-undistorted-local-color-surface-v5"
+    | "visual-hull-multiband-v6";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   mesh: BodyMesh;
@@ -389,4 +435,5 @@ export type ClothSimulationStats = {
 export type MirroState = {
   profile: BodyProfile | null;
   garments: Garment[];
+  optics?: OpticalCalibrationProfile | null;
 };

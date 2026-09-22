@@ -1288,7 +1288,7 @@ function buildTsdf(params: {
           values[index] = Math.round(
             value / quantizationCm,
           );
-          weights[index] = 255;
+          weights[index] = 0;
           continue;
         }
 

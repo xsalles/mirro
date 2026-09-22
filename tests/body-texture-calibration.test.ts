@@ -69,7 +69,11 @@ describe("body texture exposure calibration", () => {
       ) as Record<BodySide, BodySilhouette>,
     });
 
-    expect(calibration.method).toBe("log-luminance-rgb-gain-v1");
+    expect(calibration.method).toBe("local-grid-rgb-transfer-v2");
+    expect(calibration.version).toBe(2);
+    expect(calibration.grid?.columns).toBe(3);
+    expect(calibration.grid?.rows).toBe(8);
+    expect(calibration.grid?.gains.front).toHaveLength(24);
     expect(calibration.gains.right[0]).toBeGreaterThan(1);
     expect(calibration.gains.back[0]).toBeLessThan(1);
     expect(calibration.score).toBeGreaterThan(0.9);
@@ -83,4 +87,48 @@ describe("body texture exposure calibration", () => {
     const values = (["front", "right", "back", "left"] as const).map(balanced);
     expect(Math.max(...values) - Math.min(...values)).toBeLessThan(45);
   });
+  it("creates bounded local gains instead of only one global correction", () => {
+    const source = {
+      front: makeImage([150, 120, 105]),
+      right: makeImage([115, 90, 78]),
+      back: makeImage([165, 132, 116]),
+      left: makeImage([128, 102, 92]),
+    } satisfies Record<BodySide, ReturnType<typeof makeImage>>;
+
+    const front = source.front;
+    for (let y = 120; y < 220; y += 1) {
+      for (let x = 35; x < 85; x += 1) {
+        const pixel = y * front.image.width + x;
+        if (!front.mask[pixel]) continue;
+        const offset = pixel * 4;
+        front.image.data[offset] = 95;
+        front.image.data[offset + 1] = 76;
+        front.image.data[offset + 2] = 68;
+      }
+    }
+
+    const calibration = analyzeBodyTextureCalibration({
+      images: Object.fromEntries(
+        Object.entries(source).map(([side, value]) => [side, value.image]),
+      ) as Record<BodySide, RgbaImage>,
+      masks: Object.fromEntries(
+        Object.entries(source).map(([side, value]) => [side, value.mask]),
+      ) as Record<BodySide, Uint8Array>,
+      silhouettes: Object.fromEntries(
+        Object.entries(source).map(([side, value]) => [side, value.silhouette]),
+      ) as Record<BodySide, BodySilhouette>,
+    });
+
+    const field = calibration.grid?.gains.front ?? [];
+    const first = field[1] ?? [1, 1, 1];
+    const last = field[field.length - 2] ?? [1, 1, 1];
+    expect(Math.abs(last[0] - first[0])).toBeGreaterThan(0.01);
+
+    const global = calibration.gains.front[0];
+    for (const gain of field) {
+      expect(gain[0]).toBeGreaterThanOrEqual(global * 0.88 - 1e-6);
+      expect(gain[0]).toBeLessThanOrEqual(global * 1.12 + 1e-6);
+    }
+  });
+
 });

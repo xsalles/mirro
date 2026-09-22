@@ -152,7 +152,9 @@ The v5 asymmetric parametric body remains as a robust base and garment-construct
 
 The visual hull is used by the PBR body renderer and persisted together with RLE-compressed voxel occupancy. V7 also computes an exact separable 3D Euclidean distance transform for both inside and outside voxels, quantizes the signed field at 0.05 cm, and persists it for smooth cloth collision. The anatomical BodyMesh remains available for semantic landmarks, garment initialization and fallback.
 
-This is classical shape-from-silhouette, not dense stereo: concavities or surface detail invisible in the four silhouettes cannot be recovered honestly.
+The collision hull remains classical shape-from-silhouette. V7 adds a conservative first photometric refinement layer for rendering: torso vertices are plane-swept only inward along their radial ray, projected into the eight known turntable angles, and accepted only when at least three visible views reduce exposure-normalized color variance by a minimum threshold. The refined render surface is stored separately from the collision hull/SDF, so uncertain photoconsistency can never make cloth penetrate the conservative physical envelope.
+
+This is not yet a general dense-stereo reconstruction: the current sweep is radial, torso-scoped and uses the known fixed-camera turntable geometry. Concavities or hidden detail without stable multi-view texture remain unrecoverable.
 
 ## Engine roadmap
 

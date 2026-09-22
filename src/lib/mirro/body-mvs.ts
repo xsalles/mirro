@@ -70,6 +70,7 @@ function calibratedCameraForView(params: {
   image: RgbaImage;
   silhouette: BodySilhouette;
   bodyHeightCm: number;
+  frontDepthCm: number;
   optics?: OpticalCalibrationProfile;
 }): TurntableCamera | undefined {
   const optics = params.optics;
@@ -102,7 +103,12 @@ function calibratedCameraForView(params: {
   const distanceCm = Math.max(
     params.bodyHeightCm * 1.05,
     (intrinsics.fy * params.bodyHeightCm) /
-      Math.max(1, params.silhouette.bounds.height),
+        Math.max(1, params.silhouette.bounds.height) +
+      Math.max(0, params.frontDepthCm),
+  );
+  const referenceCameraDepth = Math.max(
+    1,
+    distanceCm - Math.max(0, params.frontDepthCm),
   );
   const centerProfile =
     sampleProfile(
@@ -121,10 +127,12 @@ function calibratedCameraForView(params: {
     intrinsics,
     distanceCm,
     horizontalOffsetCm:
-      ((intrinsics.cx - bodyCenterX) * distanceCm) /
+      ((intrinsics.cx - bodyCenterX) *
+        referenceCameraDepth) /
       Math.max(1e-6, intrinsics.fx),
     verticalOffsetCm:
-      ((bodyCenterY - intrinsics.cy) * distanceCm) /
+      ((bodyCenterY - intrinsics.cy) *
+        referenceCameraDepth) /
       Math.max(1e-6, intrinsics.fy),
   };
 }
@@ -369,6 +377,35 @@ function maskContains(
   return Boolean(
     view.mask[py * view.image.width + px],
   );
+}
+
+function maxHullSurfaceDepth(
+  hull: BodyVisualHull,
+  view: BodyViewId,
+) {
+  const vertices =
+    hull.multiViewStereo?.surfaceVertices ??
+    hull.photometricRefinement?.surfaceVertices ??
+    hull.vertices;
+
+  if (vertices.length >= 3) {
+    let maximum = -Infinity;
+    for (let offset = 0; offset < vertices.length; offset += 3) {
+      maximum = Math.max(
+        maximum,
+        worldDepth(
+          view,
+          vertices[offset],
+          vertices[offset + 2],
+        ),
+      );
+    }
+    if (Number.isFinite(maximum)) {
+      return maximum;
+    }
+  }
+
+  return depthBounds(hull, view).max;
 }
 
 function depthBounds(
@@ -1580,6 +1617,10 @@ export function buildClassicalMultiViewStereo(params: {
         image: params.images[view],
         silhouette: params.silhouettes[view],
         bodyHeightCm: params.bodyHeightCm,
+        frontDepthCm: Math.max(
+          0,
+          maxHullSurfaceDepth(params.hull, view),
+        ),
         optics: params.optics,
       }),
     ]),

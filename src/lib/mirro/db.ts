@@ -6,7 +6,7 @@ const META_STORE = "meta";
 const MEDIA_STORE = "media";
 const STATE_KEY = "state";
 
-const EMPTY_STATE: MirroState = { profile: null, garments: [] };
+const EMPTY_STATE: MirroState = { profile: null, garments: [], optics: null };
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -35,7 +35,14 @@ export async function loadState(): Promise<MirroState> {
   try {
     const tx = db.transaction(META_STORE, "readonly");
     const result = await requestResult(tx.objectStore(META_STORE).get(STATE_KEY));
-    return (result as MirroState | undefined) ?? EMPTY_STATE;
+    const loaded = result as MirroState | undefined;
+    return loaded
+      ? {
+          ...EMPTY_STATE,
+          ...loaded,
+          optics: loaded.optics ?? null,
+        }
+      : EMPTY_STATE;
   } finally {
     db.close();
   }

@@ -125,9 +125,12 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.version === 9 &&
+        {calibration.version === 10 &&
         calibration.mesh.visualHull?.multiViewStereo
-          ? "Scanner v9: ZNCC + Census/gradiente, coarse-to-fine subpixel e eixo compartilhado; MVS/TSDF roda em Worker com microkernel WASM quando disponível."
+          ? "Scanner v10: bundle com δθ por frame e eixo inclinado, pirâmide 1×/½/¼ e reduções WASM SIMD no Worker quando disponíveis."
+          : calibration.version === 9 &&
+              calibration.mesh.visualHull?.multiViewStereo
+            ? "Scanner v9: ZNCC + Census/gradiente, coarse-to-fine subpixel e eixo compartilhado; MVS/TSDF roda em Worker com microkernel WASM quando disponível."
           : calibration.version === 8 &&
               calibration.mesh.visualHull?.multiViewStereo
             ? "Scanner v8: 8 depth maps por ZNCC, consistência cruzada e TSDF fusionado para a superfície visual; o SDF conservador continua protegendo a colisão."

@@ -367,6 +367,16 @@ function weightedProfile(a: BodySilhouette, b: BodySilhouette) {
   );
 }
 
+function weightedMetricProfile(a: BodySilhouette, b: BodySilhouette) {
+  if (!a.metricWidthProfileCm || !b.metricWidthProfileCm) return null;
+  const totalWeight = Math.max(0.01, a.confidence + b.confidence);
+  return a.metricWidthProfileCm.map(
+    (value, index) =>
+      (value * a.confidence + (b.metricWidthProfileCm?.[index] ?? value) * b.confidence) /
+      totalWeight,
+  );
+}
+
 function meanAbsoluteDifference(a: number[], b: number[]) {
   let total = 0;
   const count = Math.min(a.length, b.length);
@@ -733,10 +743,12 @@ function partBounds(vertices: number[], vertexStart: number, vertexCount: number
 function buildAnatomicalMesh(
   radiusX: number[],
   radiusZ: number[],
-  heightCm: number,
+  measurements: BodyMeasurements,
   landmarks: BodyMesh["landmarks"],
+  version: 2 | 3,
   segmentsPerRing = DEFAULT_RING_SEGMENTS,
 ): BodyMesh {
+  const heightCm = measurements.heightCm;
   const vertices: number[] = [];
   const normals: number[] = [];
   const indices: number[] = [];
@@ -822,19 +834,31 @@ function buildAnatomicalMesh(
 
   const shoulderY = bodyY(heightCm, torsoTopRing + 2, ringCount);
   const shoulderRadiusX = torsoRadiusX[Math.min(torsoBottomRing, torsoTopRing + 2)];
-  const armStartRadius = clamp(heightCm * 0.029, 4.2, 6.3);
-  const armEndRadius = clamp(heightCm * 0.019, 2.8, 4.3);
-  const wristY = bodyY(heightCm, Math.round(ringCount * 0.55), ringCount);
+  const shoulderHalfWidth = measurements.shoulderWidthCm
+    ? clamp(measurements.shoulderWidthCm / 2, shoulderRadiusX * 0.72, shoulderRadiusX * 1.22)
+    : shoulderRadiusX * 0.9;
+  const armStartRadius = measurements.upperArmCm
+    ? clamp(measurements.upperArmCm / (Math.PI * 2), 3.5, 7.8)
+    : clamp(heightCm * 0.029, 4.2, 6.3);
+  const armEndRadius = clamp(armStartRadius * 0.64, 2.6, 4.8);
+  const armLength = measurements.armLengthCm
+    ? clamp(measurements.armLengthCm, heightCm * 0.22, heightCm * 0.42)
+    : heightCm * 0.31;
+  const armHorizontalDrift = Math.max(0.8, shoulderRadiusX * 0.16);
+  const armVerticalLength = Math.sqrt(
+    Math.max(1, armLength * armLength - armHorizontalDrift * armHorizontalDrift),
+  );
+  const wristY = shoulderY - armVerticalLength;
 
   for (const side of [-1, 1] as const) {
     const kind: BodyPartKind = side < 0 ? "left-arm" : "right-arm";
     const startPoint: Vec3 = [
-      side * shoulderRadiusX * 0.9,
+      side * shoulderHalfWidth,
       shoulderY,
       0,
     ];
     const endPoint: Vec3 = [
-      side * (shoulderRadiusX * 1.08),
+      side * (shoulderHalfWidth + armHorizontalDrift),
       wristY,
       heightCm * 0.006,
     ];
@@ -864,9 +888,18 @@ function buildAnatomicalMesh(
 
   const hipRadiusX = torsoRadiusX[landmarks.hipsRing];
   const crotchY = bodyY(heightCm, torsoBottomRing, ringCount);
-  const ankleY = -heightCm / 2 + heightCm * 0.025;
-  const thighRadius = clamp(hipRadiusX * 0.4, 5.8, heightCm * 0.052);
-  const ankleRadius = clamp(heightCm * 0.023, 3.2, 4.8);
+  const defaultAnkleY = -heightCm / 2 + heightCm * 0.025;
+  const ankleY = measurements.inseamCm
+    ? clamp(
+        crotchY - measurements.inseamCm * 0.965,
+        -heightCm / 2 + heightCm * 0.018,
+        crotchY - heightCm * 0.18,
+      )
+    : defaultAnkleY;
+  const thighRadius = measurements.thighCm
+    ? clamp(measurements.thighCm / (Math.PI * 2), 5.2, 10.5)
+    : clamp(hipRadiusX * 0.4, 5.8, heightCm * 0.052);
+  const ankleRadius = clamp(thighRadius * 0.5, 3.0, 5.2);
 
   for (const side of [-1, 1] as const) {
     const kind: BodyPartKind = side < 0 ? "left-leg" : "right-leg";
@@ -924,7 +957,7 @@ function buildAnatomicalMesh(
   }
 
   return {
-    version: 2,
+    version,
     coordinateSystem: "x-right-y-up-z-front-centimeters",
     ringCount,
     segmentsPerRing,
@@ -962,13 +995,36 @@ export function buildBodyCalibration(
 
   const frontal = weightedProfile(silhouettes.front, silhouettes.back);
   const lateral = weightedProfile(silhouettes.right, silhouettes.left);
+  const metricFrontal = weightedMetricProfile(
+    silhouettes.front,
+    silhouettes.back,
+  );
+  const metricLateral = weightedMetricProfile(
+    silhouettes.right,
+    silhouettes.left,
+  );
+  const hasMetricTarget = Boolean(metricFrontal && metricLateral);
 
   const chestRing = findLandmark(frontal, 0.23, 0.37, "max");
   const waistRing = findLandmark(frontal, 0.36, 0.5, "min");
   const hipsRing = findLandmark(frontal, 0.46, 0.61, "max");
 
-  const radiusX = frontal.map((value) => Math.max(0.65, (value * measurements.heightCm) / 2));
-  const radiusZ = lateral.map((value) => Math.max(0.65, (value * measurements.heightCm) / 2));
+  const radiusX = frontal.map((value, index) =>
+    Math.max(
+      0.65,
+      metricFrontal
+        ? (metricFrontal[index] ?? value * measurements.heightCm) / 2
+        : (value * measurements.heightCm) / 2,
+    ),
+  );
+  const radiusZ = lateral.map((value, index) =>
+    Math.max(
+      0.65,
+      metricLateral
+        ? (metricLateral[index] ?? value * measurements.heightCm) / 2
+        : (value * measurements.heightCm) / 2,
+    ),
+  );
 
   const targets = [
     { ring: chestRing, circumference: measurements.chestCm },
@@ -1007,7 +1063,14 @@ export function buildBodyCalibration(
     crotchRing: clamp(Math.round(sampleCount * 0.63), 4, sampleCount - 2),
   };
 
-  const mesh = buildAnatomicalMesh(radiusX, radiusZ, measurements.heightCm, landmarks);
+  const meshVersion: 2 | 3 = hasMetricTarget ? 3 : 2;
+  const mesh = buildAnatomicalMesh(
+    radiusX,
+    radiusZ,
+    measurements,
+    landmarks,
+    meshVersion,
+  );
   const frontBackDifference = meanAbsoluteDifference(
     silhouettes.front.widthProfile,
     silhouettes.back.widthProfile,
@@ -1021,6 +1084,14 @@ export function buildBodyCalibration(
   const consistencyScore = clamp(1 - (frontBackDifference + sideDifference) * 5, 0, 1);
   const score = clamp(averageViewConfidence * 0.72 + consistencyScore * 0.28, 0, 1);
   const warnings: string[] = [];
+  const viewCalibration = Object.fromEntries(
+    (Object.entries(silhouettes) as Array<[BodySide, BodySilhouette]>)
+      .filter(([, view]) => Boolean(view.viewCalibration))
+      .map(([side, view]) => [side, view.viewCalibration]),
+  ) as BodyCalibration["viewCalibration"];
+  const metricCalibrationScores = views
+    .map((view) => view.viewCalibration?.score)
+    .filter((score): score is number => typeof score === "number");
 
   if (views.some((view) => view.confidence < 0.5)) {
     warnings.push("Uma das fotos tem separação fraca entre corpo e fundo.");
@@ -1031,16 +1102,27 @@ export function buildBodyCalibration(
   if (sideDifference > 0.065) {
     warnings.push("As duas laterais estão com escala ou pose diferentes.");
   }
+  if (metricCalibrationScores.length > 0 && metricCalibrationScores.length < 4) {
+    warnings.push("O alvo métrico não foi reconhecido nas quatro vistas; a escala métrica completa não foi ativada.");
+  }
+  if (
+    metricCalibrationScores.some((metricScore) => metricScore < 0.68)
+  ) {
+    warnings.push("Uma vista detectou o alvo com muita perspectiva; fotografe o cartão no mesmo plano do corpo.");
+  }
   if (score < 0.58) {
     warnings.push("Refaça as fotos com corpo inteiro, fundo contrastante e câmera na mesma altura.");
   }
 
   return {
-    version: 2,
-    method: "weak-perspective-anatomical-primitives-v2",
+    version: hasMetricTarget ? 3 : 2,
+    method: hasMetricTarget
+      ? "metric-target-anatomical-v3"
+      : "weak-perspective-anatomical-primitives-v2",
     sampleCount,
     silhouettes,
     mesh,
+    viewCalibration,
     quality: {
       score,
       frontBackDifference,

@@ -76,7 +76,7 @@ export default function TryOnPage() {
 
   const runtimeBodyMesh = useMemo(() => {
     if (!profile?.calibration) return undefined;
-    if (profile.calibration.mesh.version === 2) {
+    if (profile.calibration.mesh.version >= 2) {
       return profile.calibration.mesh;
     }
 
@@ -87,6 +87,11 @@ export default function TryOnPage() {
         chestCm: profile.chestCm,
         waistCm: profile.waistCm,
         hipsCm: profile.hipsCm,
+        shoulderWidthCm: profile.shoulderWidthCm,
+        armLengthCm: profile.armLengthCm,
+        upperArmCm: profile.upperArmCm,
+        thighCm: profile.thighCm,
+        inseamCm: profile.inseamCm,
       },
     ).mesh;
   }, [profile]);

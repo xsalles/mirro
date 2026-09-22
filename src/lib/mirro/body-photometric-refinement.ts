@@ -434,8 +434,6 @@ export function refineVisualHullPhotometrically(params: {
 
   return {
     ...params.hull,
-    vertices,
-    normals: recomputeNormals(vertices, params.hull.indices),
     photometricRefinement: {
       version: 1,
       method: "turntable-plane-sweep-photoconsistency-v1",
@@ -444,6 +442,11 @@ export function refineVisualHullPhotometrically(params: {
       maxInwardOffsetCm,
       meanRelativeImprovement:
         improvementSum / refinedVertexCount,
+      surfaceVertices: vertices,
+      surfaceNormals: recomputeNormals(
+        vertices,
+        params.hull.indices,
+      ),
     },
   };
 }

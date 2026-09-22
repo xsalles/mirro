@@ -207,6 +207,14 @@ export type BodyVisualHull = {
   normals: number[];
   indices: number[];
   signedDistanceField?: BodySignedDistanceField;
+  photometricRefinement?: {
+    version: 1;
+    method: "turntable-plane-sweep-photoconsistency-v1";
+    refinedVertexCount: number;
+    meanInwardOffsetCm: number;
+    maxInwardOffsetCm: number;
+    meanRelativeImprovement: number;
+  };
 };
 
 export type BodyPartKind =

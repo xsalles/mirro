@@ -108,20 +108,33 @@ describe("buildBodyCalibration", () => {
     measurements,
   );
 
-  it("creates a centimeter-based indexed mesh with normals", () => {
+  it("creates an anatomical centimeter-based mesh with separate body parts", () => {
     const mesh = calibration.mesh;
+    expect(mesh.version).toBe(2);
     expect(mesh.ringCount).toBe(samples);
     expect(mesh.segmentsPerRing).toBe(32);
-    expect(mesh.vertices.length / 3).toBe(samples * 32 + 2);
+    expect(mesh.vertices.length / 3).toBeGreaterThan(900);
     expect(mesh.normals).toHaveLength(mesh.vertices.length);
     expect(mesh.indices.length % 3).toBe(0);
     expect(mesh.boundsCm.height).toBe(measurements.heightCm);
-    expect(mesh.boundsCm.width).toBeGreaterThan(mesh.boundsCm.depth);
     expect(mesh.vertices.every(Number.isFinite)).toBe(true);
+
+    expect(mesh.parts?.map((part) => part.kind).sort()).toEqual([
+      "head",
+      "left-arm",
+      "left-leg",
+      "right-arm",
+      "right-leg",
+      "torso",
+    ]);
+    expect(mesh.collisionPrimitives).toHaveLength(6);
   });
 
-  it("uses real torso measurements to calibrate cross sections", () => {
+  it("uses real torso measurements to calibrate anatomical torso profiles", () => {
     const { mesh } = calibration;
+    expect(mesh.radiusXProfile).toBeDefined();
+    expect(mesh.radiusZProfile).toBeDefined();
+
     const checks = [
       [mesh.landmarks.chestRing, measurements.chestCm],
       [mesh.landmarks.waistRing, measurements.waistCm],
@@ -129,12 +142,21 @@ describe("buildBodyCalibration", () => {
     ] as const;
 
     for (const [ring, target] of checks) {
-      const base = ring * mesh.segmentsPerRing * 3;
-      const quarter = (ring * mesh.segmentsPerRing + mesh.segmentsPerRing / 4) * 3;
-      const radiusX = Math.abs(mesh.vertices[base]);
-      const radiusZ = Math.abs(mesh.vertices[quarter + 2]);
+      const radiusX = mesh.radiusXProfile?.[ring] ?? 0;
+      const radiusZ = mesh.radiusZProfile?.[ring] ?? 0;
       expect(ellipseCircumference(radiusX, radiusZ)).toBeCloseTo(target, 0);
     }
+  });
+
+  it("stores shoulder and crotch landmarks for semantic garments", () => {
+    expect(calibration.mesh.landmarks.shoulderRing).toBeTypeOf("number");
+    expect(calibration.mesh.landmarks.crotchRing).toBeTypeOf("number");
+    expect(calibration.mesh.landmarks.shoulderRing).toBeLessThan(
+      calibration.mesh.landmarks.chestRing,
+    );
+    expect(calibration.mesh.landmarks.crotchRing).toBeGreaterThan(
+      calibration.mesh.landmarks.hipsRing,
+    );
   });
 
   it("reports coherent multi-view quality for similar opposite views", () => {

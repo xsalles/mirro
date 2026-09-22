@@ -1013,18 +1013,17 @@ function createRawDepthMap(params: {
   const confidence = new Uint8Array(width * height);
   let validCount = 0;
   let confidenceSum = 0;
+  let subpixelRefinedCount = 0;
+  let subpixelOffsetSum = 0;
 
-  const inwardOffsets = [
+  const coarseOffsets = [
     0,
-    0.35,
-    0.7,
-    1.1,
-    1.6,
-    2.2,
-    3,
+    1.2,
+    2.6,
     4,
     5.2,
   ];
+  const maxInwardCm = 5.6;
 
   for (let gy = 0; gy < height; gy += 1) {
     const pixelY =
@@ -1051,12 +1050,15 @@ function createRawDepthMap(params: {
       });
       if (hullDepth === null) continue;
 
-      let bestDepth = hullDepth;
-      let bestCorrelation = -Infinity;
-      let secondCorrelation = -Infinity;
+      const evaluateDepth = (candidateDepth: number) => {
+        if (
+          candidateDepth > hullDepth + 1e-6 ||
+          candidateDepth <
+            hullDepth - maxInwardCm - 1e-6
+        ) {
+          return null;
+        }
 
-      for (const inward of inwardOffsets) {
-        const candidateDepth = hullDepth - inward;
         const coordinate = pixelToViewCoordinates(
           reference,
           params.bodyHeightCm,
@@ -1080,10 +1082,10 @@ function createRawDepthMap(params: {
             world[2],
           ) > 0.3
         ) {
-          continue;
+          return null;
         }
 
-        const correlation = scoreCandidate({
+        return scoreCandidate({
           referenceView: params.view,
           views: params.views,
           bodyHeightCm: params.bodyHeightCm,
@@ -1091,28 +1093,100 @@ function createRawDepthMap(params: {
           pixelY,
           depthCm: candidateDepth,
         });
-        if (correlation === null) continue;
+      };
 
-        if (correlation > bestCorrelation) {
-          secondCorrelation = bestCorrelation;
-          bestCorrelation = correlation;
-          bestDepth = candidateDepth;
-        } else if (correlation > secondCorrelation) {
-          secondCorrelation = correlation;
+      const coarse: Array<{
+        depth: number;
+        score: number;
+      }> = [];
+
+      for (const inward of coarseOffsets) {
+        const depth = hullDepth - inward;
+        const score = evaluateDepth(depth);
+        if (score !== null) {
+          coarse.push({ depth, score });
         }
       }
 
-      if (!Number.isFinite(bestCorrelation)) continue;
-      const margin = Number.isFinite(secondCorrelation)
-        ? bestCorrelation - secondCorrelation
-        : 0.12;
-      if (bestCorrelation < 0.2 || margin < 0.012) {
+      if (coarse.length < 2) continue;
+      coarse.sort((a, b) => b.score - a.score);
+      const ambiguityMargin =
+        coarse[0].score - coarse[1].score;
+
+      let bestDepth = coarse[0].depth;
+      let bestScore = coarse[0].score;
+
+      const fineDepths = [
+        bestDepth - 0.55,
+        bestDepth - 0.28,
+        bestDepth + 0.28,
+        bestDepth + 0.55,
+      ];
+
+      for (const depth of fineDepths) {
+        const score = evaluateDepth(depth);
+        if (score !== null && score > bestScore) {
+          bestDepth = depth;
+          bestScore = score;
+        }
+      }
+
+      const subpixelStepCm = 0.16;
+      const minusScore = evaluateDepth(
+        bestDepth - subpixelStepCm,
+      );
+      const plusScore = evaluateDepth(
+        bestDepth + subpixelStepCm,
+      );
+
+      if (
+        minusScore !== null &&
+        plusScore !== null
+      ) {
+        const curvature =
+          minusScore -
+          2 * bestScore +
+          plusScore;
+
+        if (curvature < -1e-4) {
+          const correction = clamp(
+            (0.5 *
+              subpixelStepCm *
+              (minusScore - plusScore)) /
+              curvature,
+            -subpixelStepCm,
+            subpixelStepCm,
+          );
+          const refinedDepth = bestDepth + correction;
+          const refinedScore = evaluateDepth(refinedDepth);
+
+          if (
+            refinedScore !== null &&
+            refinedScore >= bestScore - 0.004
+          ) {
+            bestDepth = refinedDepth;
+            bestScore = Math.max(
+              bestScore,
+              refinedScore,
+            );
+            if (Math.abs(correction) >= 0.015) {
+              subpixelRefinedCount += 1;
+              subpixelOffsetSum += Math.abs(correction);
+            }
+          }
+        }
+      }
+
+      if (
+        bestScore < 0.42 ||
+        ambiguityMargin < 0.01
+      ) {
         continue;
       }
 
       const confidenceValue = clamp(
-        ((bestCorrelation - 0.15) / 0.75) * 0.72 +
-          (margin / 0.16) * 0.28,
+        ((bestScore - 0.35) / 0.6) * 0.76 +
+          (ambiguityMargin / 0.15) * 0.24,
         0,
         1,
       );
@@ -1129,8 +1203,8 @@ function createRawDepthMap(params: {
   }
 
   return {
-    version: 1,
-    method: "turntable-zncc-plane-sweep-v1",
+    version: 2,
+    method: "turntable-robust-coarse-to-fine-v2",
     view: params.view,
     width,
     height,
@@ -1141,6 +1215,11 @@ function createRawDepthMap(params: {
     meanConfidence: validCount
       ? confidenceSum / validCount
       : 0,
+    subpixelRefinedCount,
+    meanSubpixelOffsetCm:
+      subpixelRefinedCount > 0
+        ? subpixelOffsetSum / subpixelRefinedCount
+        : 0,
   };
 }
 

@@ -724,14 +724,14 @@ function createRawDepthMap(params: {
   bodyHeightCm: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 32;
+  const width = 28;
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    58,
-    84,
+    52,
+    76,
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);
@@ -741,13 +741,11 @@ function createRawDepthMap(params: {
 
   const inwardOffsets = [
     0,
-    0.35,
-    0.7,
-    1.1,
-    1.6,
-    2.2,
-    3,
-    4,
+    0.6,
+    1.2,
+    1.9,
+    2.8,
+    3.9,
     5.2,
   ];
 
@@ -952,38 +950,42 @@ function regularizeDepthMap(map: BodyDepthMap) {
   const nextDepth = new Int16Array(map.depthValues);
   const nextConfidence = new Uint8Array(map.confidence);
 
+  const neighborsAt = (x: number, y: number) => {
+    const neighbors: Array<{
+      depth: number;
+      confidence: number;
+    }> = [];
+
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (dx === 0 && dy === 0) continue;
+        const px = x + dx;
+        const py = y + dy;
+        if (
+          px < 0 ||
+          py < 0 ||
+          px >= map.width ||
+          py >= map.height
+        ) {
+          continue;
+        }
+        const index = py * map.width + px;
+        const depth = decodeDepth(map, index);
+        const confidence = map.confidence[index] / 255;
+        if (depth === null || confidence < 0.14) continue;
+        neighbors.push({ depth, confidence });
+      }
+    }
+
+    return neighbors;
+  };
+
   for (let y = 0; y < map.height; y += 1) {
     for (let x = 0; x < map.width; x += 1) {
       const index = y * map.width + x;
       const center = decodeDepth(map, index);
       if (center === null) continue;
-
-      const neighbors: Array<{
-        depth: number;
-        confidence: number;
-      }> = [];
-
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          if (dx === 0 && dy === 0) continue;
-          const px = x + dx;
-          const py = y + dy;
-          if (
-            px < 0 ||
-            py < 0 ||
-            px >= map.width ||
-            py >= map.height
-          ) {
-            continue;
-          }
-          const neighborIndex = py * map.width + px;
-          const depth = decodeDepth(map, neighborIndex);
-          const confidence =
-            map.confidence[neighborIndex] / 255;
-          if (depth === null || confidence < 0.14) continue;
-          neighbors.push({ depth, confidence });
-        }
-      }
+      const neighbors = neighborsAt(x, y);
 
       if (neighbors.length < 2) {
         nextConfidence[index] = Math.round(
@@ -1026,6 +1028,41 @@ function regularizeDepthMap(map: BodyDepthMap) {
 
   map.depthValues.set(nextDepth);
   map.confidence.set(nextConfidence);
+
+  const filledDepth = new Int16Array(map.depthValues);
+  const filledConfidence = new Uint8Array(map.confidence);
+
+  for (let y = 1; y < map.height - 1; y += 1) {
+    for (let x = 1; x < map.width - 1; x += 1) {
+      const index = y * map.width + x;
+      if (decodeDepth(map, index) !== null) continue;
+
+      const neighbors = neighborsAt(x, y);
+      if (neighbors.length < 5) continue;
+      const ordered = neighbors
+        .map((item) => item.depth)
+        .sort((a, b) => a - b);
+      const spread =
+        ordered[ordered.length - 1] - ordered[0];
+      if (spread > 1.45) continue;
+
+      const median =
+        ordered[Math.floor(ordered.length / 2)];
+      const meanConfidence =
+        neighbors.reduce(
+          (sum, item) => sum + item.confidence,
+          0,
+        ) / neighbors.length;
+
+      filledDepth[index] = quantizeDepth(median);
+      filledConfidence[index] = Math.round(
+        clamp(meanConfidence * 0.58, 0, 0.7) * 255,
+      );
+    }
+  }
+
+  map.depthValues.set(filledDepth);
+  map.confidence.set(filledConfidence);
 }
 
 
@@ -1535,6 +1572,15 @@ function extractTsdfSurface(tsdf: BodyTsdfVolume) {
             point(x + dx, y + dy, z + dz),
         );
         const cornerValues = cornerIndices.map(value);
+        let minimum = Infinity;
+        let maximum = -Infinity;
+        for (const cornerValue of cornerValues) {
+          minimum = Math.min(minimum, cornerValue);
+          maximum = Math.max(maximum, cornerValue);
+        }
+        if (minimum >= 0 || maximum < 0) {
+          continue;
+        }
 
         for (const tetra of TETRAHEDRA) {
           const inside = tetra.filter(

@@ -724,14 +724,14 @@ function createRawDepthMap(params: {
   bodyHeightCm: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 32;
+  const width = 28;
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    58,
-    84,
+    52,
+    74,
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);
@@ -1278,7 +1278,7 @@ function buildTsdf(params: {
               ),
             ),
           );
-          if (delta > Math.PI * 0.62) continue;
+          if (delta > Math.PI * 0.4) continue;
 
           const sample = tsdfSampleFromMap({
             map: params.maps[viewId],

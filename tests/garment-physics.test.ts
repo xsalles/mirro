@@ -9,6 +9,7 @@ import {
 import {
   buildGarmentMesh,
   clothMaterialForGarment,
+  defaultFabricPhysicalProfile,
 } from "../src/lib/mirro/garment-mesh";
 import { simulateCloth, solveGarmentSelfCollisions } from "../src/lib/mirro/xpbd";
 import type {
@@ -315,4 +316,119 @@ describe("GarmentMesh + XPBD", () => {
     expect(heavyMaterial.bendCompliance).toBeLessThan(lightMaterial.bendCompliance);
     expect(heavyMaterial.thicknessCm).toBeGreaterThan(lightMaterial.thicknessCm);
   });
+  it("maps measured fabric data to anisotropic XPBD material and particle mass", () => {
+    const calibration = calibrationFromProfiles();
+    const garment = makeGarment(calibration);
+    garment.physicalProfile = {
+      densityGsm: 360,
+      thicknessMm: 1.2,
+      stretchWarpPct: 4,
+      stretchWeftPct: 30,
+      bendStiffness: 82,
+      friction: 0.31,
+    };
+
+    const material = clothMaterialForGarment(garment);
+    const mesh = buildGarmentMesh({
+      garment,
+      calibration,
+      bodyMesh: makeBodyMesh(),
+    });
+
+    expect(material.stretchWarpCompliance).toBeLessThan(
+      material.stretchWeftCompliance ?? 0,
+    );
+    expect(material.particleInverseMass).toBeLessThan(1);
+    expect(material.thicknessCm).toBeCloseTo(0.12, 4);
+    expect(material.friction).toBeCloseTo(0.31, 4);
+    expect(new Set(mesh.inverseMass)).toEqual(
+      new Set([material.particleInverseMass ?? 1]),
+    );
+
+    const structuralAxes = new Set(
+      mesh.constraints
+        .filter((constraint) => constraint.kind === "structural")
+        .map((constraint) => constraint.axis),
+    );
+    expect(structuralAxes).toEqual(new Set(["warp", "weft"]));
+  });
+
+  it("lets high-stretch weft relax less aggressively than low-stretch warp", () => {
+    const calibration = calibrationFromProfiles();
+    const garment = makeGarment(calibration);
+    garment.physicalProfile = {
+      densityGsm: 180,
+      thicknessMm: 0.8,
+      stretchWarpPct: 2,
+      stretchWeftPct: 35,
+      bendStiffness: 55,
+      friction: 0.1,
+    };
+    const material = {
+      ...clothMaterialForGarment(garment),
+      gravityCmPerSec2: 0,
+    };
+    const bodyMesh = makeBodyMesh();
+
+    function pairMesh(axis: "warp" | "weft"): GarmentMesh {
+      return {
+        version: 2,
+        coordinateSystem: "x-right-y-up-z-front-centimeters",
+        category: "top",
+        rows: 1,
+        cols: 2,
+        panelVertexCount: 2,
+        positions: [100, 0, 0, 102, 0, 0],
+        previousPositions: [100, 0, 0, 102, 0, 0],
+        inverseMass: [0, 1],
+        uv: [0, 0, 1, 0],
+        indices: [],
+        constraints: [
+          {
+            kind: "structural",
+            axis,
+            a: 0,
+            b: 1,
+            restLength: 1,
+            lambda: 0,
+          },
+        ],
+        boundsCm: { width: 2, height: 0, depth: 0 },
+      };
+    }
+
+    const warpMesh = pairMesh("warp");
+    const weftMesh = pairMesh("weft");
+
+    simulateCloth({
+      mesh: warpMesh,
+      bodyMesh,
+      material,
+      steps: 1,
+      dt: 1 / 60,
+      iterations: 1,
+    });
+    simulateCloth({
+      mesh: weftMesh,
+      bodyMesh,
+      material,
+      steps: 1,
+      dt: 1 / 60,
+      iterations: 1,
+    });
+
+    const warpLength = Math.abs(warpMesh.positions[3] - warpMesh.positions[0]);
+    const weftLength = Math.abs(weftMesh.positions[3] - weftMesh.positions[0]);
+    expect(weftLength).toBeGreaterThan(warpLength);
+  });
+
+  it("keeps preset fabric profiles available for legacy/simple input", () => {
+    const light = defaultFabricPhysicalProfile("light", "low");
+    const heavy = defaultFabricPhysicalProfile("heavy", "low");
+
+    expect(heavy.densityGsm).toBeGreaterThan(light.densityGsm);
+    expect(heavy.thicknessMm).toBeGreaterThan(light.thicknessMm);
+    expect(heavy.bendStiffness).toBeGreaterThan(light.bendStiffness);
+  });
+
 });

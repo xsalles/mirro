@@ -40,6 +40,44 @@ function alphaGarment(width = 140, height = 180, back = false): AlphaImage {
   return { width, height, alpha };
 }
 
+function alphaPants(width = 150, height = 220): AlphaImage {
+  const alpha = new Uint8Array(width * height);
+  const center = width / 2;
+
+  for (let y = 10; y < height - 8; y += 1) {
+    const t = (y - 10) / (height - 18);
+
+    if (t < 0.42) {
+      const halfWidth = 48 - t * 16;
+      for (
+        let x = Math.max(0, Math.floor(center - halfWidth));
+        x <= Math.min(width - 1, Math.ceil(center + halfWidth));
+        x += 1
+      ) {
+        alpha[y * width + x] = 255;
+      }
+      continue;
+    }
+
+    const legWidth = Math.max(18, 28 - t * 7);
+    const gap = 12 + t * 8;
+    const leftCenter = center - gap / 2 - legWidth / 2;
+    const rightCenter = center + gap / 2 + legWidth / 2;
+
+    for (const legCenter of [leftCenter, rightCenter]) {
+      for (
+        let x = Math.max(0, Math.floor(legCenter - legWidth / 2));
+        x <= Math.min(width - 1, Math.ceil(legCenter + legWidth / 2));
+        x += 1
+      ) {
+        alpha[y * width + x] = 255;
+      }
+    }
+  }
+
+  return { width, height, alpha };
+}
+
 function fakeBodySilhouette(
   profile: number[],
   confidence = 0.94,
@@ -120,6 +158,14 @@ describe("garment alpha calibration", () => {
     expect(silhouette.centerProfile).toHaveLength(48);
     expect(silhouette.occupancyRatio).toBeGreaterThan(0.5);
     expect(silhouette.widthProfile[3]).toBeGreaterThan(silhouette.widthProfile[30]);
+    expect(silhouette.intervalProfile).toHaveLength(48);
+  });
+
+  it("detects two independent leg runs from pants alpha", () => {
+    const silhouette = analyzeAlphaSilhouette(alphaPants());
+    expect(
+      silhouette.intervalProfile?.some((intervals) => intervals.length === 2),
+    ).toBe(true);
   });
 
   it("compares front and back without inventing garment geometry", () => {
@@ -132,19 +178,58 @@ describe("garment alpha calibration", () => {
 });
 
 describe("GarmentMesh + XPBD", () => {
-  it("builds two textured panels with shoulder and side seam constraints", () => {
+  it("builds semantic torso and sleeve regions with real texture sides", () => {
     const bodyMesh = makeBodyMesh();
     const calibration = calibrationFromProfiles();
     const garment = makeGarment(calibration);
     const mesh = buildGarmentMesh({ garment, calibration, bodyMesh });
 
-    expect(mesh.panelVertexCount).toBe(mesh.rows * mesh.cols);
-    expect(mesh.positions.length / 3).toBe(mesh.panelVertexCount * 2);
+    expect(mesh.version).toBe(2);
     expect(mesh.uv).toHaveLength((mesh.positions.length / 3) * 2);
+    expect(mesh.textureSide).toHaveLength(mesh.positions.length / 3);
+    expect(mesh.regionIds).toHaveLength(mesh.positions.length / 3);
     expect(mesh.indices.length % 3).toBe(0);
     expect(mesh.constraints.filter((constraint) => constraint.kind === "seam").length)
-      .toBeGreaterThan(mesh.rows * 2);
+      .toBeGreaterThan(80);
+    expect(mesh.regions?.map((region) => region.kind)).toEqual(
+      expect.arrayContaining([
+        "torso-front",
+        "torso-back",
+        "left-sleeve-front",
+        "left-sleeve-back",
+        "right-sleeve-front",
+        "right-sleeve-back",
+      ]),
+    );
     expect(mesh.positions.every(Number.isFinite)).toBe(true);
+  });
+
+  it("splits pants into waistband, left leg, right leg and crotch seams", () => {
+    const bodyMesh = makeBodyMesh();
+    const front = analyzeAlphaSilhouette(alphaPants());
+    const back = analyzeAlphaSilhouette(alphaPants(150, 220));
+    const calibration = buildGarmentCalibration(front, back);
+    const garment = makeGarment(calibration);
+    garment.category = "pants";
+    garment.name = "Calça teste";
+
+    const mesh = buildGarmentMesh({ garment, calibration, bodyMesh });
+    const kinds = mesh.regions?.map((region) => region.kind) ?? [];
+
+    expect(kinds).toEqual(
+      expect.arrayContaining([
+        "waist-front",
+        "waist-back",
+        "left-leg-front",
+        "left-leg-back",
+        "right-leg-front",
+        "right-leg-back",
+      ]),
+    );
+    expect(
+      mesh.constraints.filter((constraint) => constraint.kind === "seam").length,
+    ).toBeGreaterThan(60);
+    expect(mesh.boundsCm.height).toBeGreaterThan(bodyMesh.boundsCm.height * 0.35);
   });
 
   it("relaxes cloth under gravity while keeping particles outside the BodyMesh", () => {

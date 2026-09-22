@@ -29,8 +29,54 @@ export type BodySilhouette = {
   confidence: number;
 };
 
+export type BodyPartKind =
+  | "head"
+  | "torso"
+  | "left-arm"
+  | "right-arm"
+  | "left-leg"
+  | "right-leg";
+
+export type BodyPartMesh = {
+  kind: BodyPartKind;
+  vertexStart: number;
+  vertexCount: number;
+  indexStart: number;
+  indexCount: number;
+  centerCm: [number, number, number];
+  boundsCm: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+};
+
+export type BodyCollisionPrimitive =
+  | {
+      type: "ellipsoid";
+      part: "head";
+      center: [number, number, number];
+      radii: [number, number, number];
+    }
+  | {
+      type: "tapered-capsule";
+      part: "left-arm" | "right-arm" | "left-leg" | "right-leg";
+      start: [number, number, number];
+      end: [number, number, number];
+      startRadius: number;
+      endRadius: number;
+    }
+  | {
+      type: "elliptical-hull";
+      part: "torso";
+      topY: number;
+      bottomY: number;
+      radiusX: number[];
+      radiusZ: number[];
+    };
+
 export type BodyMesh = {
-  version: 1;
+  version: 1 | 2;
   coordinateSystem: "x-right-y-up-z-front-centimeters";
   ringCount: number;
   segmentsPerRing: number;
@@ -41,17 +87,27 @@ export type BodyMesh = {
     chestRing: number;
     waistRing: number;
     hipsRing: number;
+    shoulderRing?: number;
+    crotchRing?: number;
   };
   boundsCm: {
     width: number;
     height: number;
     depth: number;
   };
+  radiusXProfile?: number[];
+  radiusZProfile?: number[];
+  torsoTopRing?: number;
+  torsoBottomRing?: number;
+  parts?: BodyPartMesh[];
+  collisionPrimitives?: BodyCollisionPrimitive[];
 };
 
 export type BodyCalibration = {
-  version: 1;
-  method: "weak-perspective-elliptical-hull-v1";
+  version: 1 | 2;
+  method:
+    | "weak-perspective-elliptical-hull-v1"
+    | "weak-perspective-anatomical-primitives-v2";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   mesh: BodyMesh;
@@ -74,6 +130,8 @@ export type GarmentCategory = "top" | "shirt" | "hoodie" | "pants" | "shorts";
 export type FabricWeight = "light" | "medium" | "heavy";
 export type StretchLevel = "none" | "low" | "medium" | "high";
 
+export type GarmentRowInterval = [number, number];
+
 export type GarmentSilhouette = {
   sourceWidth: number;
   sourceHeight: number;
@@ -86,6 +144,7 @@ export type GarmentSilhouette = {
   widthProfile: number[];
   centerProfile: number[];
   occupancyRatio: number;
+  intervalProfile?: GarmentRowInterval[][];
 };
 
 export type GarmentCalibration = {
@@ -138,8 +197,31 @@ export type ClothMaterial = {
   friction: number;
 };
 
+export type GarmentRegionKind =
+  | "torso-front"
+  | "torso-back"
+  | "left-sleeve-front"
+  | "left-sleeve-back"
+  | "right-sleeve-front"
+  | "right-sleeve-back"
+  | "waist-front"
+  | "waist-back"
+  | "left-leg-front"
+  | "left-leg-back"
+  | "right-leg-front"
+  | "right-leg-back";
+
+export type GarmentMeshRegion = {
+  id: number;
+  kind: GarmentRegionKind;
+  vertexStart: number;
+  vertexCount: number;
+  indexStart: number;
+  indexCount: number;
+};
+
 export type GarmentMesh = {
-  version: 1;
+  version: 1 | 2;
   coordinateSystem: "x-right-y-up-z-front-centimeters";
   category: GarmentCategory;
   rows: number;
@@ -156,6 +238,9 @@ export type GarmentMesh = {
     height: number;
     depth: number;
   };
+  textureSide?: number[];
+  regionIds?: number[];
+  regions?: GarmentMeshRegion[];
 };
 
 export type ClothSimulationStats = {

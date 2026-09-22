@@ -44,9 +44,9 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
 
     function project(vertexIndex: number) {
       const offset = vertexIndex * 3;
-      const x = mesh.vertices[offset];
-      const y = mesh.vertices[offset + 1];
-      const z = mesh.vertices[offset + 2];
+      const x = mesh.vertices[offset] ?? 0;
+      const y = mesh.vertices[offset + 1] ?? 0;
+      const z = mesh.vertices[offset + 2] ?? 0;
       const rotatedX = x * cos + z * sin;
       return {
         x: width / 2 + rotatedX * scale,
@@ -55,36 +55,46 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     }
 
     context.strokeStyle = thread;
-    context.globalAlpha = 0.72;
-    context.lineWidth = 1;
+    context.globalAlpha = 0.34;
+    context.lineWidth = 0.55;
 
-    for (let ring = 0; ring < mesh.ringCount; ring += 3) {
+    const stride = mesh.version === 2 ? 2 : 1;
+    for (let offset = 0; offset < mesh.indices.length; offset += 3 * stride) {
+      const a = project(mesh.indices[offset]);
+      const b = project(mesh.indices[offset + 1]);
+      const c = project(mesh.indices[offset + 2]);
       context.beginPath();
-      for (let segment = 0; segment <= mesh.segmentsPerRing; segment += 1) {
-        const normalized = segment % mesh.segmentsPerRing;
-        const point = project(ring * mesh.segmentsPerRing + normalized);
-        if (segment === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
-      }
+      context.moveTo(a.x, a.y);
+      context.lineTo(b.x, b.y);
+      context.lineTo(c.x, c.y);
+      context.closePath();
       context.stroke();
     }
 
-    context.globalAlpha = 0.44;
-    for (let segment = 0; segment < mesh.segmentsPerRing; segment += 4) {
-      context.beginPath();
-      for (let ring = 0; ring < mesh.ringCount; ring += 1) {
-        const point = project(ring * mesh.segmentsPerRing + segment);
-        if (ring === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
+    if (mesh.parts?.length) {
+      context.globalAlpha = 1;
+      context.fillStyle = muted;
+      context.font = "600 10px Manrope, sans-serif";
+      context.textAlign = "center";
+
+      for (const part of mesh.parts) {
+        const center = part.centerCm;
+        const rotatedX = center[0] * cos + center[2] * sin;
+        const x = width / 2 + rotatedX * scale;
+        const y = height / 2 - center[1] * scale;
+        context.fillText(part.kind.replace("-", " "), x, y);
       }
-      context.stroke();
     }
 
     context.globalAlpha = 1;
     context.fillStyle = muted;
     context.font = "600 11px Manrope, sans-serif";
     context.textAlign = "right";
-    context.fillText(`${mesh.boundsCm.height.toFixed(0)} cm`, width - 16, 20);
+    context.fillText(
+      `${mesh.boundsCm.height.toFixed(0)} cm · v${mesh.version}`,
+      width - 16,
+      20,
+    );
   }, [calibration]);
 
   return (
@@ -97,7 +107,9 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        Wireframe do hull corporal v1. É uma malha de colisão aproximada, não um modelo anatômico final.
+        {calibration.mesh.version === 2
+          ? "BodyMesh v2 por partes: torso, cabeça, braços e pernas possuem geometria e colisão próprias."
+          : "Perfil legado v1. Ao recalibrar, o MIRRO gera automaticamente a topologia anatômica v2."}
       </figcaption>
     </figure>
   );

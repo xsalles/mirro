@@ -201,7 +201,9 @@ export function ClothSimulationPreview({
         indices: [ia, ib, ic],
         points: [a, b, c],
         depth: (a.depth + b.depth + c.depth) / 3,
-        panel: ia < garmentMesh.panelVertexCount ? 0 : 1,
+        panel: garmentMesh.textureSide
+          ? garmentMesh.textureSide[ia] === 1 ? 1 : 0
+          : ia < garmentMesh.panelVertexCount ? 0 : 1,
       });
     }
 
@@ -280,28 +282,18 @@ export function ClothSimulationPreview({
       }
     } else {
       context.strokeStyle = line;
-      context.lineWidth = 1;
-      context.globalAlpha = 0.8;
+      context.lineWidth = 0.55;
+      context.globalAlpha = 0.42;
 
-      for (let ring = 0; ring < bodyMesh.ringCount; ring += 4) {
+      for (let offset = 0; offset < bodyMesh.indices.length; offset += 3) {
+        const a = bodyPoint(bodyMesh.indices[offset]);
+        const b = bodyPoint(bodyMesh.indices[offset + 1]);
+        const c = bodyPoint(bodyMesh.indices[offset + 2]);
         context.beginPath();
-        for (let segment = 0; segment <= bodyMesh.segmentsPerRing; segment += 1) {
-          const normalized = segment % bodyMesh.segmentsPerRing;
-          const point = bodyPoint(ring * bodyMesh.segmentsPerRing + normalized);
-          if (segment === 0) context.moveTo(point.x, point.y);
-          else context.lineTo(point.x, point.y);
-        }
-        context.stroke();
-      }
-
-      context.globalAlpha = 0.38;
-      for (let segment = 0; segment < bodyMesh.segmentsPerRing; segment += 4) {
-        context.beginPath();
-        for (let ring = 0; ring < bodyMesh.ringCount; ring += 1) {
-          const point = bodyPoint(ring * bodyMesh.segmentsPerRing + segment);
-          if (ring === 0) context.moveTo(point.x, point.y);
-          else context.lineTo(point.x, point.y);
-        }
+        context.moveTo(a.x, a.y);
+        context.lineTo(b.x, b.y);
+        context.lineTo(c.x, c.y);
+        context.closePath();
         context.stroke();
       }
 

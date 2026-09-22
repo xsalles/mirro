@@ -5,8 +5,10 @@ import Link from "next/link";
 import { RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ClothSimulationPreview } from "@/components/cloth-simulation-preview";
+import { ThreePbrPreview } from "@/components/three-pbr-preview";
 import { useMirro } from "@/components/mirro-provider";
 import { Button } from "@/components/ui/button";
+import { buildBodyCalibration } from "@/lib/mirro/body-calibration";
 import { loadMedia } from "@/lib/mirro/db";
 import { fitGarment } from "@/lib/mirro/fit";
 import { calibrateGarmentFromProcessedImages } from "@/lib/mirro/garment-image-processing";
@@ -65,11 +67,29 @@ export default function TryOnPage() {
   const [revision, setRevision] = useState(0);
   const [rerun, setRerun] = useState(0);
   const [simulationEngine, setSimulationEngine] = useState<"worker" | "main" | null>(null);
+  const [physicsView, setPhysicsView] = useState<"pbr" | "mesh">("pbr");
 
   const garment: Garment | undefined = useMemo(
     () => state.garments.find((item) => item.id === selectedId) ?? state.garments[0],
     [state.garments, selectedId],
   );
+
+  const runtimeBodyMesh = useMemo(() => {
+    if (!profile?.calibration) return undefined;
+    if (profile.calibration.mesh.version === 2) {
+      return profile.calibration.mesh;
+    }
+
+    return buildBodyCalibration(
+      profile.calibration.silhouettes,
+      {
+        heightCm: profile.heightCm,
+        chestCm: profile.chestCm,
+        waistCm: profile.waistCm,
+        hipsCm: profile.hipsCm,
+      },
+    ).mesh;
+  }, [profile]);
 
   const bodyUrl = useMediaUrl(profile?.photos.front?.key);
   const garmentUrl = useMediaUrl(garment?.images.front.key);
@@ -77,7 +97,7 @@ export default function TryOnPage() {
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
 
   useEffect(() => {
-    const currentBodyMesh = bodyMesh;
+    const currentBodyMesh = runtimeBodyMesh;
     const currentGarment = garment;
     if (!currentBodyMesh || !currentGarment || mode !== "physics") return;
     const resolvedBodyMesh = currentBodyMesh;
@@ -264,9 +284,9 @@ export default function TryOnPage() {
       cancelAnimationFrame(animationFrame);
       simulationWorker?.terminate();
     };
-  }, [bodyMesh, garment, mode, rerun]);
+  }, [runtimeBodyMesh, garment, mode, rerun]);
 
-  if (!profile?.photos.front || !bodyMesh || state.garments.length === 0) {
+  if (!profile?.photos.front || !runtimeBodyMesh || state.garments.length === 0) {
     return (
       <div className="rounded-2xl border border-[var(--line)] bg-white p-8">
         <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Experimentar</h1>
@@ -328,15 +348,27 @@ export default function TryOnPage() {
         >
           {mode === "physics" ? (
             simulationData ? (
-              <ClothSimulationPreview
-                bodyMesh={bodyMesh}
-                garmentMesh={simulationData.mesh}
-                revision={revision}
-                yawDegrees={yaw}
-                frontTextureUrl={garmentUrl}
-                backTextureUrl={garmentBackUrl}
-                textured={simulationStatus === "ready"}
-              />
+              physicsView === "pbr" ? (
+                <ThreePbrPreview
+                  bodyMesh={runtimeBodyMesh}
+                  garmentMesh={simulationData.mesh}
+                  revision={revision}
+                  yawDegrees={yaw}
+                  frontTextureUrl={garmentUrl}
+                  backTextureUrl={garmentBackUrl}
+                  fabricWeight={garment?.fabricWeight ?? "medium"}
+                />
+              ) : (
+                <ClothSimulationPreview
+                  bodyMesh={runtimeBodyMesh}
+                  garmentMesh={simulationData.mesh}
+                  revision={revision}
+                  yawDegrees={yaw}
+                  frontTextureUrl={garmentUrl}
+                  backTextureUrl={garmentBackUrl}
+                  textured={simulationStatus === "ready"}
+                />
+              )
             ) : (
               <div className="grid aspect-[31/38] place-items-center bg-[var(--surface-2)] p-8 text-center">
                 <div>
@@ -401,6 +433,33 @@ export default function TryOnPage() {
         </section>
 
         <aside className="space-y-4">
+          {mode === "physics" ? (
+            <div className="rounded-2xl border border-[var(--line)] bg-white p-5">
+              <p className="text-sm font-semibold">Visualização 3D</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  aria-pressed={physicsView === "pbr"}
+                  onClick={() => setPhysicsView("pbr")}
+                  className={`min-h-10 cursor-pointer rounded-xl border px-3 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)] ${physicsView === "pbr" ? "border-[var(--ink)] bg-[var(--ink)] text-white" : "border-[var(--line)] hover:bg-[var(--surface-2)]"}`}
+                >
+                  PBR
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={physicsView === "mesh"}
+                  onClick={() => setPhysicsView("mesh")}
+                  className={`min-h-10 cursor-pointer rounded-xl border px-3 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)] ${physicsView === "mesh" ? "border-[var(--ink)] bg-[var(--ink)] text-white" : "border-[var(--line)] hover:bg-[var(--surface-2)]"}`}
+                >
+                  Malha técnica
+                </button>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+                PBR usa perspectiva, iluminação e propriedades do tecido. A malha técnica continua disponível para diagnóstico.
+              </p>
+            </div>
+          ) : null}
+
           <div className="rounded-2xl border border-[var(--line)] bg-white p-5">
             <label htmlFor="garment" className="text-sm font-semibold">Peça</label>
             <select
@@ -554,7 +613,7 @@ export default function TryOnPage() {
           )}
 
           <div className="rounded-2xl bg-[var(--thread-soft)] p-5 text-sm leading-6">
-            <strong>Limite atual:</strong> o GarmentMesh já resolve colisão com o corpo e self-collision espacial do tecido. Calças ainda usam um envelope único porque o BodyMesh v1 não separa as duas pernas; PBR e topologia anatômica continuam como próximas camadas.
+            <strong>Engine v2:</strong> o corpo agora possui torso, cabeça, braços e pernas separados; tops têm mangas próprias e calças usam duas pernas com cavalo. O PBR usa WebGPU com fallback WebGL2. A principal limitação restante é a calibração de câmera/tecido a partir de poucas fotos, não a topologia básica.
           </div>
         </aside>
       </div>

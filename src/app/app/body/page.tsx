@@ -137,7 +137,7 @@ export default function BodyPage() {
         <div>
           <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Meu corpo</h1>
           <p className="mt-2 max-w-2xl text-[var(--muted)]">
-            As quatro fotos viram silhuetas calibradas e um hull corporal 3D em centímetros. Use roupa justa, corpo inteiro e fundo simples.
+            As quatro fotos viram silhuetas calibradas e um BodyMesh anatômico em centímetros, com torso, cabeça, braços e pernas separados. Use roupa justa, corpo inteiro e fundo simples.
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--muted)]">
@@ -274,7 +274,7 @@ export default function BodyPage() {
       {calibration ? (
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
-            <h2 className="font-display text-3xl font-bold tracking-[-.04em]">BodyMesh v1 pronto</h2>
+            <h2 className="font-display text-3xl font-bold tracking-[-.04em]">BodyMesh v2 anatômico pronto</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
               Fusão multi-view em perspectiva fraca. Frente/costas estimam largura; laterais estimam profundidade; suas medidas corrigem tórax, cintura e quadril.
             </p>
@@ -321,7 +321,7 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                As quatro vistas estão coerentes o suficiente para o hull v1.
+                As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica v2 e os colisores separados.
               </p>
             )}
           </div>

@@ -514,7 +514,7 @@ function optimizeTurntableBundleFromSilhouettes(params: {
       method: "robust-axis-angle-tilt-bundle-v2",
       optimized: true,
       axisCenterCm: solved.axisOriginCm,
-      sharedCameraDistanceCm,
+      sharedCameraDistanceCm: sharedDistanceCm,
       verticalOpticalOffsetCm:
         solved.opticalOffsetCm[1],
       centerResidualCm:

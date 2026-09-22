@@ -10,7 +10,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "design:lint": "npx -y -p @google/design.md designmd lint DESIGN.md",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "wasm:build": "asc assembly/mvs-simd.ts --target release --enable simd --runtime stub --outFile public/mvs-simd.wasm",
+    "predev": "npm run wasm:build",
+    "pretest": "npm run wasm:build",
+    "prebuild": "npm run wasm:build"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -29,6 +33,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0",
-    "@types/three": "0.186.0"
+    "@types/three": "0.186.0",
+    "assemblyscript": "0.28.20"
   }
 }

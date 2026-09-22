@@ -524,9 +524,12 @@ function frontHullDepth(params: {
   return null;
 }
 
-function neighborViews(view: BodyViewId) {
+function neighborViews(
+  view: BodyViewId,
+  offsets: number[] = [-1, 1, -2, 2],
+) {
   const index = BODY_VIEW_SEQUENCE.indexOf(view);
-  return [-2, -1, 1, 2].map(
+  return offsets.map(
     (offset) =>
       BODY_VIEW_SEQUENCE[
         (index + offset + BODY_VIEW_SEQUENCE.length) %
@@ -659,22 +662,30 @@ function scoreCandidate(params: {
 }) {
   const correlations: number[] = [];
 
-  for (const targetView of neighborViews(
-    params.referenceView,
-  )) {
-    const correlation = patchZncc({
-      referenceView: params.referenceView,
-      targetView,
-      reference: params.views[params.referenceView],
-      target: params.views[targetView],
-      bodyHeightCm: params.bodyHeightCm,
-      centerPixelX: params.pixelX,
-      centerPixelY: params.pixelY,
-      candidateDepthCm: params.depthCm,
-    });
-    if (correlation !== null) {
-      correlations.push(correlation);
+  const evaluate = (offsets: number[]) => {
+    for (const targetView of neighborViews(
+      params.referenceView,
+      offsets,
+    )) {
+      const correlation = patchZncc({
+        referenceView: params.referenceView,
+        targetView,
+        reference: params.views[params.referenceView],
+        target: params.views[targetView],
+        bodyHeightCm: params.bodyHeightCm,
+        centerPixelX: params.pixelX,
+        centerPixelY: params.pixelY,
+        candidateDepthCm: params.depthCm,
+      });
+      if (correlation !== null) {
+        correlations.push(correlation);
+      }
     }
+  };
+
+  evaluate([-1, 1]);
+  if (correlations.length < 2) {
+    evaluate([-2, 2]);
   }
 
   if (correlations.length < 2) return null;
@@ -713,14 +724,14 @@ function createRawDepthMap(params: {
   bodyHeightCm: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 40;
+  const width = 32;
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    72,
-    104,
+    58,
+    84,
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);
@@ -1244,10 +1255,31 @@ function buildTsdf(params: {
           continue;
         }
 
+        if (hullDistance <= -truncationCm) {
+          values[index] = -maxQuantized;
+          weights[index] = 0;
+          continue;
+        }
+
         let sum = 0;
         let weightSum = 0;
 
+        const radialAngle = Math.atan2(x, z);
         for (const viewId of BODY_VIEW_SEQUENCE) {
+          const delta = Math.abs(
+            Math.atan2(
+              Math.sin(
+                radialAngle -
+                  BODY_VIEW_ANGLE_RAD[viewId],
+              ),
+              Math.cos(
+                radialAngle -
+                  BODY_VIEW_ANGLE_RAD[viewId],
+              ),
+            ),
+          );
+          if (delta > Math.PI * 0.62) continue;
+
           const sample = tsdfSampleFromMap({
             map: params.maps[viewId],
             view: params.views[viewId],

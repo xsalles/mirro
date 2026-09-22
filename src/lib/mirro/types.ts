@@ -404,6 +404,12 @@ export type BodyMesh = {
   parts?: BodyPartMesh[];
   collisionPrimitives?: BodyCollisionPrimitive[];
   visualHull?: BodyVisualHull;
+  semanticMeasurements?: {
+    neckRadiusCm?: number;
+    forearmRadiusCm?: number;
+    calfRadiusCm?: number;
+    shoulderSlopeDeg?: number;
+  };
 };
 
 export type BodyCalibration = {
@@ -453,6 +459,11 @@ export type GarmentCategory =
   | "shorts";
 export type FabricWeight = "light" | "medium" | "heavy";
 export type StretchLevel = "none" | "low" | "medium" | "high";
+export type SleeveLength =
+  | "sleeveless"
+  | "short"
+  | "three-quarter"
+  | "long";
 
 export type FabricPhysicalProfile = {
   densityGsm: number;
@@ -516,6 +527,7 @@ export type Garment = {
   id: string;
   name: string;
   category: GarmentCategory;
+  sleeveLength?: SleeveLength;
   size: string;
   fabricWeight: FabricWeight;
   stretch: StretchLevel;

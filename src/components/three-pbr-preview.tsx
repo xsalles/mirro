@@ -167,7 +167,11 @@ export function ThreePbrPreview({
       bodyGeometry.setAttribute(
         "uv",
         new THREE.Float32BufferAttribute(
-          bodyAtlasUvs(bodyMesh.vertices, bodyMesh.boundsCm.height),
+          bodyAtlasUvs(
+            bodyMesh.vertices,
+            bodyMesh.boundsCm.height,
+            bodyMesh.centerZProfile,
+          ),
           2,
         ),
       );
@@ -180,6 +184,7 @@ export function ThreePbrPreview({
             urls: bodyTextureUrls,
             silhouettes: bodyCalibration.silhouettes,
             textureCalibration: bodyCalibration.textureCalibration,
+            cameraRig: bodyCalibration.cameraRig,
           });
           if (disposed) return;
           const atlasTexture = new THREE.CanvasTexture(atlas);

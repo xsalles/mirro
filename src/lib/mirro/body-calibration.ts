@@ -18,8 +18,8 @@ export type SegmentedSilhouette = {
   silhouette: BodySilhouette;
 };
 
-const DEFAULT_PROFILE_SAMPLES = 64;
-const DEFAULT_RING_SEGMENTS = 32;
+const DEFAULT_PROFILE_SAMPLES = 96;
+const DEFAULT_RING_SEGMENTS = 48;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -291,6 +291,47 @@ function buildWidthProfile(
   return smoothProfile(values, 2);
 }
 
+function buildCenterProfile(
+  mask: Uint8Array,
+  width: number,
+  bounds: { x: number; y: number; width: number; height: number },
+  sampleCount: number,
+) {
+  const values = new Array<number>(sampleCount).fill(0);
+  const boundsCenter = bounds.x + bounds.width / 2;
+
+  for (let sample = 0; sample < sampleCount; sample += 1) {
+    const t = sampleCount === 1 ? 0 : sample / (sampleCount - 1);
+    const centerY = bounds.y + Math.round(t * (bounds.height - 1));
+    let totalCenter = 0;
+    let rows = 0;
+
+    for (let dy = -1; dy <= 1; dy += 1) {
+      const y = centerY + dy;
+      if (y < bounds.y || y >= bounds.y + bounds.height) continue;
+
+      let minX = width;
+      let maxX = -1;
+      for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+        if (!mask[y * width + x]) continue;
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+      }
+
+      if (maxX >= minX) {
+        totalCenter += (minX + maxX) / 2;
+        rows += 1;
+      }
+    }
+
+    values[sample] = rows
+      ? (totalCenter / rows - boundsCenter) / bounds.height
+      : 0;
+  }
+
+  return smoothProfile(values, 3);
+}
+
 function countEdgeTouches(mask: Uint8Array, width: number, height: number) {
   let touches = 0;
   for (let x = 0; x < width; x += 1) {
@@ -331,6 +372,12 @@ export function segmentBodySilhouette(
   }
 
   const widthProfile = buildWidthProfile(mask, image.width, bounds, sampleCount);
+  const centerProfile = buildCenterProfile(
+    mask,
+    image.width,
+    bounds,
+    sampleCount,
+  );
   const edgeTouches = countEdgeTouches(mask, image.width, image.height);
   const perimeter = Math.max(1, image.width * 2 + image.height * 2 - 4);
   const bodyHeightRatio = bounds.height / image.height;
@@ -352,6 +399,7 @@ export function segmentBodySilhouette(
       sourceHeight: image.height,
       bounds,
       widthProfile,
+      centerProfile,
       foregroundRatio,
       backgroundThreshold: threshold,
       confidence,
@@ -373,6 +421,20 @@ function weightedMetricProfile(a: BodySilhouette, b: BodySilhouette) {
   return a.metricWidthProfileCm.map(
     (value, index) =>
       (value * a.confidence + (b.metricWidthProfileCm?.[index] ?? value) * b.confidence) /
+      totalWeight,
+  );
+}
+
+function weightedCenterProfile(
+  right: BodySilhouette,
+  left: BodySilhouette,
+) {
+  if (!right.centerProfile || !left.centerProfile) return null;
+  const totalWeight = Math.max(0.01, right.confidence + left.confidence);
+  return right.centerProfile.map(
+    (value, index) =>
+      (-value * right.confidence +
+        (left.centerProfile?.[index] ?? -value) * left.confidence) /
       totalWeight,
   );
 }
@@ -498,6 +560,7 @@ function appendEllipticalTorso(params: {
   indices: number[];
   radiusX: number[];
   radiusZ: number[];
+  centerZ: number[];
   heightCm: number;
   startRing: number;
   endRing: number;
@@ -509,6 +572,7 @@ function appendEllipticalTorso(params: {
     indices,
     radiusX,
     radiusZ,
+    centerZ,
     heightCm,
     startRing,
     endRing,
@@ -527,7 +591,11 @@ function appendEllipticalTorso(params: {
 
     for (let segment = 0; segment < segments; segment += 1) {
       const angle = (segment / segments) * Math.PI * 2;
-      vertices.push(Math.cos(angle) * rx, y, Math.sin(angle) * rz);
+      vertices.push(
+        Math.cos(angle) * rx,
+        y,
+        (centerZ[sourceRing] ?? 0) + Math.sin(angle) * rz,
+      );
       normals.push(0, 0, 0);
     }
   }
@@ -544,10 +612,18 @@ function appendEllipticalTorso(params: {
   }
 
   const topCenter = vertices.length / 3;
-  vertices.push(0, bodyY(heightCm, startRing, sourceRingCount), 0);
+  vertices.push(
+    0,
+    bodyY(heightCm, startRing, sourceRingCount),
+    centerZ[startRing] ?? 0,
+  );
   normals.push(0, 0, 0);
   const bottomCenter = vertices.length / 3;
-  vertices.push(0, bodyY(heightCm, endRing, sourceRingCount), 0);
+  vertices.push(
+    0,
+    bodyY(heightCm, endRing, sourceRingCount),
+    centerZ[endRing] ?? 0,
+  );
   normals.push(0, 0, 0);
 
   for (let segment = 0; segment < segments; segment += 1) {
@@ -743,9 +819,10 @@ function partBounds(vertices: number[], vertexStart: number, vertexCount: number
 function buildAnatomicalMesh(
   radiusX: number[],
   radiusZ: number[],
+  centerZProfile: number[],
   measurements: BodyMeasurements,
   landmarks: BodyMesh["landmarks"],
-  version: 2 | 3,
+  version: 2 | 3 | 4,
   segmentsPerRing = DEFAULT_RING_SEGMENTS,
 ): BodyMesh {
   const heightCm = measurements.heightCm;
@@ -768,6 +845,7 @@ function buildAnatomicalMesh(
 
   const torsoRadiusX = [...radiusX];
   const torsoRadiusZ = [...radiusZ];
+  const torsoCenterZ = [...centerZProfile];
   const torsoWidthCap = Math.max(
     radiusX[landmarks.chestRing] * 1.22,
     radiusX[landmarks.hipsRing] * 1.14,
@@ -783,6 +861,7 @@ function buildAnatomicalMesh(
     indices,
     radiusX: torsoRadiusX,
     radiusZ: torsoRadiusZ,
+    centerZ: torsoCenterZ,
     heightCm,
     startRing: torsoTopRing,
     endRing: torsoBottomRing,
@@ -805,6 +884,7 @@ function buildAnatomicalMesh(
     bottomY: bodyY(heightCm, torsoBottomRing, ringCount),
     radiusX: torsoRadiusX.slice(torsoTopRing, torsoBottomRing + 1),
     radiusZ: torsoRadiusZ.slice(torsoTopRing, torsoBottomRing + 1),
+    centerZ: torsoCenterZ.slice(torsoTopRing, torsoBottomRing + 1),
   });
 
   const headRadii: Vec3 = [
@@ -812,7 +892,11 @@ function buildAnatomicalMesh(
     heightCm * 0.067,
     heightCm * 0.054,
   ];
-  const headCenter: Vec3 = [0, heightCm / 2 - headRadii[1], 0];
+  const headCenter: Vec3 = [
+    0,
+    heightCm / 2 - headRadii[1],
+    torsoCenterZ[Math.max(0, torsoTopRing - 1)] ?? 0,
+  ];
   const headGeometry = appendEllipsoid({
     vertices,
     normals,
@@ -833,7 +917,9 @@ function buildAnatomicalMesh(
   });
 
   const shoulderY = bodyY(heightCm, torsoTopRing + 2, ringCount);
-  const shoulderRadiusX = torsoRadiusX[Math.min(torsoBottomRing, torsoTopRing + 2)];
+  const shoulderIndex = Math.min(torsoBottomRing, torsoTopRing + 2);
+  const shoulderRadiusX = torsoRadiusX[shoulderIndex];
+  const shoulderCenterZ = torsoCenterZ[shoulderIndex] ?? 0;
   const shoulderHalfWidth = measurements.shoulderWidthCm
     ? clamp(measurements.shoulderWidthCm / 2, shoulderRadiusX * 0.72, shoulderRadiusX * 1.22)
     : shoulderRadiusX * 0.9;
@@ -855,12 +941,12 @@ function buildAnatomicalMesh(
     const startPoint: Vec3 = [
       side * shoulderHalfWidth,
       shoulderY,
-      0,
+      shoulderCenterZ,
     ];
     const endPoint: Vec3 = [
       side * (shoulderHalfWidth + armHorizontalDrift),
       wristY,
-      heightCm * 0.006,
+      shoulderCenterZ + heightCm * 0.006,
     ];
     const geometry = appendTaperedLimb({
       vertices,
@@ -887,6 +973,7 @@ function buildAnatomicalMesh(
   }
 
   const hipRadiusX = torsoRadiusX[landmarks.hipsRing];
+  const hipCenterZ = torsoCenterZ[landmarks.hipsRing] ?? 0;
   const crotchY = bodyY(heightCm, torsoBottomRing, ringCount);
   const defaultAnkleY = -heightCm / 2 + heightCm * 0.025;
   const ankleY = measurements.inseamCm
@@ -906,12 +993,12 @@ function buildAnatomicalMesh(
     const startPoint: Vec3 = [
       side * hipRadiusX * 0.43,
       crotchY + thighRadius * 0.25,
-      0,
+      hipCenterZ,
     ];
     const endPoint: Vec3 = [
       side * hipRadiusX * 0.45,
       ankleY,
-      0,
+      hipCenterZ * 0.35,
     ];
     const geometry = appendTaperedLimb({
       vertices,
@@ -967,6 +1054,7 @@ function buildAnatomicalMesh(
     landmarks,
     radiusXProfile: torsoRadiusX,
     radiusZProfile: torsoRadiusZ,
+    centerZProfile: torsoCenterZ,
     torsoTopRing,
     torsoBottomRing,
     parts,
@@ -1003,6 +1091,10 @@ export function buildBodyCalibration(
     silhouettes.right,
     silhouettes.left,
   );
+  const lateralCenter = weightedCenterProfile(
+    silhouettes.right,
+    silhouettes.left,
+  );
   const hasMetricTarget = Boolean(metricFrontal && metricLateral);
 
   const chestRing = findLandmark(frontal, 0.23, 0.37, "max");
@@ -1025,6 +1117,15 @@ export function buildBodyCalibration(
         : (value * measurements.heightCm) / 2,
     ),
   );
+  const centerZ = lateral.map((_, index) => {
+    const raw =
+      (lateralCenter?.[index] ?? 0) * measurements.heightCm;
+    return clamp(
+      raw,
+      -radiusZ[index] * 0.38,
+      radiusZ[index] * 0.38,
+    );
+  });
 
   const targets = [
     { ring: chestRing, circumference: measurements.chestCm },
@@ -1063,10 +1164,16 @@ export function buildBodyCalibration(
     crotchRing: clamp(Math.round(sampleCount * 0.63), 4, sampleCount - 2),
   };
 
-  const meshVersion: 2 | 3 = hasMetricTarget ? 3 : 2;
+  const meshVersion: 2 | 3 | 4 =
+    hasMetricTarget && lateralCenter
+      ? 4
+      : hasMetricTarget
+        ? 3
+        : 2;
   const mesh = buildAnatomicalMesh(
     radiusX,
     radiusZ,
+    centerZ,
     measurements,
     landmarks,
     meshVersion,

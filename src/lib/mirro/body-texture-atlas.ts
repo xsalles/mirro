@@ -1,6 +1,8 @@
 "use client";
 
+import { undistortRgbaImage } from "./lens-distortion";
 import type {
+  BodyCameraRig,
   BodySide,
   BodySilhouette,
   BodyTextureCalibration,
@@ -44,19 +46,23 @@ function sampleProfile(profile: number[], t: number) {
   );
 }
 
-async function loadImage(url: string): Promise<SourceImage> {
+async function loadImage(
+  url: string,
+  targetWidth: number,
+  targetHeight: number,
+): Promise<SourceImage> {
   const image = new Image();
   image.decoding = "async";
   image.src = url;
   await image.decode();
 
   const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) throw new Error("Canvas 2D indisponível para textura corporal.");
 
-  context.drawImage(image, 0, 0);
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
   const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
   return { width: canvas.width, height: canvas.height, data };
 }
@@ -120,6 +126,37 @@ function sourcePoint(
   };
 }
 
+function sampleGridGain(
+  calibration: BodyTextureCalibration | undefined,
+  side: BodySide,
+  horizontal: number,
+  vertical: number,
+): [number, number, number] {
+  const fallback = calibration?.gains[side] ?? [1, 1, 1];
+  const grid = calibration?.grid;
+  if (!grid) return fallback;
+
+  const gx = clamp(horizontal, 0, 1) * Math.max(0, grid.columns - 1);
+  const gy = clamp(vertical, 0, 1) * Math.max(0, grid.rows - 1);
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const x1 = Math.min(grid.columns - 1, x0 + 1);
+  const y1 = Math.min(grid.rows - 1, y0 + 1);
+  const tx = gx - x0;
+  const ty = gy - y0;
+  const at = (x: number, y: number) =>
+    grid.gains[side][y * grid.columns + x] ?? fallback;
+  const a = at(x0, y0);
+  const b = at(x1, y0);
+  const cc = at(x0, y1);
+  const d = at(x1, y1);
+  return [0, 1, 2].map((channel) => {
+    const top = a[channel] + (b[channel] - a[channel]) * tx;
+    const bottom = cc[channel] + (d[channel] - cc[channel]) * tx;
+    return top + (bottom - top) * ty;
+  }) as [number, number, number];
+}
+
 function angularWeight(side: BodySide, angle: number, confidence: number) {
   const delta = Math.abs(wrapAngle(angle - SIDE_ANGLE[side]));
   const coverage = (72 * Math.PI) / 180;
@@ -133,6 +170,7 @@ export async function buildBodyTextureAtlas(params: {
   urls: Partial<Record<BodySide, string | null>>;
   silhouettes: Record<BodySide, BodySilhouette>;
   textureCalibration?: BodyTextureCalibration;
+  cameraRig?: BodyCameraRig;
   width?: number;
   height?: number;
 }) {
@@ -142,7 +180,23 @@ export async function buildBodyTextureAtlas(params: {
     SIDES.map(async (side) => {
       const url = params.urls[side];
       if (!url) return [side, null] as const;
-      return [side, await loadImage(url)] as const;
+      const silhouette = params.silhouettes[side];
+      const source = await loadImage(
+        url,
+        silhouette.sourceWidth,
+        silhouette.sourceHeight,
+      );
+      if (params.cameraRig?.distortion) {
+        return [
+          side,
+          undistortRgbaImage(
+            source,
+            params.cameraRig.intrinsics,
+            params.cameraRig.distortion,
+          ),
+        ] as const;
+      }
+      return [side, source] as const;
     }),
   );
   const sources = Object.fromEntries(loadedEntries) as Partial<
@@ -156,7 +210,6 @@ export async function buildBodyTextureAtlas(params: {
   if (!context) throw new Error("Canvas 2D indisponível para atlas corporal.");
 
   const output = context.createImageData(width, height);
-  const gains = params.textureCalibration?.gains;
 
   for (let y = 0; y < height; y += 1) {
     const v = y / Math.max(1, height - 1);
@@ -179,7 +232,18 @@ export async function buildBodyTextureAtlas(params: {
 
         const point = sourcePoint(silhouette, side, angle, v);
         const sampled = bilinearSample(source, point.x, point.y);
-        const gain = gains?.[side] ?? [1, 1, 1];
+        const localHorizontal = clamp(
+          (point.x - silhouette.bounds.x) /
+            Math.max(1, silhouette.bounds.width),
+          0,
+          1,
+        );
+        const gain = sampleGridGain(
+          params.textureCalibration,
+          side,
+          localHorizontal,
+          v,
+        );
 
         r += sampled[0] * gain[0] * weight;
         g += sampled[1] * gain[1] * weight;
@@ -206,7 +270,11 @@ export async function buildBodyTextureAtlas(params: {
   return canvas;
 }
 
-export function bodyAtlasUvs(vertices: number[], heightCm: number) {
+export function bodyAtlasUvs(
+  vertices: number[],
+  heightCm: number,
+  centerZProfile?: number[],
+) {
   const uv = new Array<number>((vertices.length / 3) * 2);
   const halfHeight = heightCm / 2;
 
@@ -215,13 +283,16 @@ export function bodyAtlasUvs(vertices: number[], heightCm: number) {
     const x = vertices[offset];
     const y = vertices[offset + 1];
     const z = vertices[offset + 2];
-    const angle = Math.atan2(x, z);
-    const u = ((angle / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
     const v = clamp(
       (halfHeight - y) / Math.max(1, heightCm),
       0,
       1,
     );
+    const centerZ = centerZProfile?.length
+      ? sampleProfile(centerZProfile, v)
+      : 0;
+    const angle = Math.atan2(x, z - centerZ);
+    const u = ((angle / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
 
     uv[vertex * 2] = u;
     uv[vertex * 2 + 1] = v;

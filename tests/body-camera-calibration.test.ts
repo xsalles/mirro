@@ -8,12 +8,19 @@ import {
   rectifySilhouetteWithPinhole,
   solveBodyCameraRig,
 } from "../src/lib/mirro/camera-rig";
+import {
+  distortNormalizedPoint,
+  estimateLensDistortion,
+  undistortNormalizedPoint,
+} from "../src/lib/mirro/lens-distortion";
 import type {
+  BodyCameraRig,
   BodySide,
   BodySilhouette,
   BodyViewCalibration,
   CameraExtrinsics,
   CameraIntrinsics,
+  LensDistortion,
 } from "../src/lib/mirro/types";
 
 function syntheticTarget(): RgbaImage {
@@ -105,6 +112,7 @@ function multiplyRotation(
 function projectTarget(
   intrinsics: CameraIntrinsics,
   extrinsics: CameraExtrinsics,
+  distortion?: LensDistortion,
 ) {
   const world = {
     magenta: [-7.9, -12.25],
@@ -123,11 +131,14 @@ function projectTarget(
       const zc = r[6] * x + r[7] * y + t[2];
       const xn = xc / zc;
       const yn = yc / zc;
+      const projected = distortion
+        ? distortNormalizedPoint([xn, yn], distortion)
+        : [xn, yn];
       return [
         name,
         [
-          intrinsics.fx * xn + intrinsics.cx,
-          intrinsics.fy * yn + intrinsics.cy,
+          intrinsics.fx * projected[0] + intrinsics.cx,
+          intrinsics.fy * projected[1] + intrinsics.cy,
         ],
       ];
     }),
@@ -140,12 +151,17 @@ function syntheticView(
   pitch: number,
   yaw: number,
   translation: [number, number, number],
+  distortion?: LensDistortion,
 ): BodyViewCalibration {
   const extrinsics: CameraExtrinsics = {
     rotation: multiplyRotation(pitch, yaw),
     translation,
   };
-  const markerCenters = projectTarget(intrinsics, extrinsics);
+  const markerCenters = projectTarget(
+    intrinsics,
+    extrinsics,
+    distortion,
+  );
   const top = Math.hypot(
     markerCenters.cyan[0] - markerCenters.magenta[0],
     markerCenters.cyan[1] - markerCenters.magenta[1],
@@ -265,5 +281,100 @@ describe("shared pinhole camera rig", () => {
       expect(solved.calibrations[side].extrinsics?.translation[2]).toBeGreaterThan(0);
       expect(solved.calibrations[side].reprojectionErrorPx).toBeLessThan(3);
     }
+  });
+});
+
+describe("Brown-Conrady lens calibration", () => {
+  it("recovers a useful distortion field and reduces reprojection RMS", () => {
+    const intrinsics: CameraIntrinsics = {
+      fx: 980,
+      fy: 965,
+      cx: 450,
+      cy: 600,
+      skew: 0,
+    };
+    const expected: LensDistortion = {
+      k1: -0.28,
+      k2: 0.09,
+      k3: -0.015,
+      p1: 0.006,
+      p2: -0.004,
+    };
+    const poses: Record<BodySide, CameraExtrinsics> = {
+      front: {
+        rotation: multiplyRotation(0.18, -0.2),
+        translation: [10, 4, 58],
+      },
+      right: {
+        rotation: multiplyRotation(0.28, 0.24),
+        translation: [-12, 8, 62],
+      },
+      back: {
+        rotation: multiplyRotation(-0.22, -0.3),
+        translation: [8, -7, 56],
+      },
+      left: {
+        rotation: multiplyRotation(-0.3, 0.18),
+        translation: [-9, -5, 60],
+      },
+    };
+    const calibrations = Object.fromEntries(
+      (["front", "right", "back", "left"] as const).map((side) => [
+        side,
+        syntheticView(
+          side,
+          intrinsics,
+          0,
+          0,
+          poses[side].translation,
+          expected,
+        ),
+      ]),
+    ) as Record<BodySide, BodyViewCalibration>;
+
+    for (const side of ["front", "right", "back", "left"] as const) {
+      calibrations[side].markerCenters = projectTarget(
+        intrinsics,
+        poses[side],
+        expected,
+      );
+    }
+
+    const rig: BodyCameraRig = {
+      version: 1,
+      method: "shared-pinhole-bundle-v1",
+      intrinsics,
+      views: Object.fromEntries(
+        (["front", "right", "back", "left"] as const).map((side) => [
+          side,
+          {
+            ...poses[side],
+            homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+            reprojectionErrorPx: 0,
+          },
+        ]),
+      ) as BodyCameraRig["views"],
+      rmsReprojectionErrorPx: 0,
+      iterations: 0,
+      conditionScore: 1,
+      warnings: [],
+    };
+
+    const solved = estimateLensDistortion(calibrations, rig);
+
+    expect(solved.improvementPx).toBeGreaterThan(0.2);
+    expect(solved.distortedRmsPx).toBeLessThan(
+      solved.baselineRmsPx * 0.7,
+    );
+    expect(Math.sign(solved.distortion.k1)).toBe(
+      Math.sign(expected.k1),
+    );
+    expect(Math.abs(solved.distortion.p1)).toBeGreaterThan(0.0005);
+
+    const point: [number, number] = [0.35, -0.22];
+    const distorted = distortNormalizedPoint(point, expected);
+    const recovered = undistortNormalizedPoint(distorted, expected);
+    expect(recovered[0]).toBeCloseTo(point[0], 5);
+    expect(recovered[1]).toBeCloseTo(point[1], 5);
   });
 });

@@ -106,7 +106,8 @@ describe("segmentBodySilhouette", () => {
     const result = segmentBodySilhouette(syntheticPerson());
 
     expect(result.silhouette.bounds.height).toBeGreaterThan(220);
-    expect(result.silhouette.widthProfile).toHaveLength(64);
+    expect(result.silhouette.widthProfile).toHaveLength(96);
+    expect(result.silhouette.centerProfile).toHaveLength(96);
     expect(result.silhouette.confidence).toBeGreaterThan(0.65);
     expect(result.silhouette.widthProfile[20]).toBeGreaterThan(result.silhouette.widthProfile[2]);
     expect(result.mask.some((value) => value === 1)).toBe(true);
@@ -138,7 +139,7 @@ describe("buildBodyCalibration", () => {
     const mesh = calibration.mesh;
     expect(mesh.version).toBe(2);
     expect(mesh.ringCount).toBe(samples);
-    expect(mesh.segmentsPerRing).toBe(32);
+    expect(mesh.segmentsPerRing).toBe(48);
     expect(mesh.vertices.length / 3).toBeGreaterThan(900);
     expect(mesh.normals).toHaveLength(mesh.vertices.length);
     expect(mesh.indices.length % 3).toBe(0);
@@ -241,6 +242,44 @@ describe("buildBodyCalibration", () => {
       ),
     ).toBeCloseTo(62, 0);
     expect(leftLeg.startRadius).toBeCloseTo(58 / (Math.PI * 2), 1);
+  });
+
+  it("builds an asymmetric metric BodyMesh v4 from lateral contour centers", () => {
+    const centered = new Array(samples).fill(0);
+    const bulge = centered.map((_, index) => {
+      const t = index / (samples - 1);
+      return t > 0.28 && t < 0.62 ? 0.018 : 0;
+    });
+    const right = metricSilhouette(side, 0.95);
+    const left = metricSilhouette(side, 0.95);
+    right.centerProfile = bulge.map((value) => -value);
+    left.centerProfile = bulge;
+
+    const detailed = buildBodyCalibration(
+      {
+        front: metricSilhouette(front, 0.95),
+        back: metricSilhouette(front, 0.95),
+        right,
+        left,
+      },
+      measurements,
+    );
+
+    expect(detailed.mesh.version).toBe(4);
+    expect(detailed.mesh.centerZProfile).toHaveLength(samples);
+    expect(
+      Math.max(...(detailed.mesh.centerZProfile ?? []).map(Math.abs)),
+    ).toBeGreaterThan(1);
+
+    const torso = detailed.mesh.collisionPrimitives?.find(
+      (primitive) => primitive.type === "elliptical-hull",
+    );
+    expect(torso?.type).toBe("elliptical-hull");
+    if (!torso || torso.type !== "elliptical-hull") {
+      throw new Error("torso collision hull missing");
+    }
+    expect(torso.centerZ).toBeDefined();
+    expect(Math.max(...(torso.centerZ ?? []).map(Math.abs))).toBeGreaterThan(1);
   });
 
 });

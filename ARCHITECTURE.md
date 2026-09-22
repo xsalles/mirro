@@ -21,7 +21,7 @@ Next.js App Router + React client components for local-only workflows. IndexedDB
 
 BodyMesh v2 is deterministic and anatomical enough for separate sleeve/leg collision, while still remaining a parametric reconstruction rather than a full photogrammetric scan. Existing v1 profiles remain readable and are rebuilt as v2 in memory when try-on starts.
 
-## Camera model — shared pinhole v4 implemented
+## Camera model — Brown–Conrady v5 implemented
 
 The printable A4 target still supplies a metric plane and four deterministic correspondences per body view. MIRRO now additionally solves a shared pinhole camera rig when all four target detections are valid:
 
@@ -33,7 +33,9 @@ The printable A4 target still supplies a metric plane and four deterministic cor
 
 A poorly conditioned capture (for example targets that are all nearly fronto-parallel) is explicitly warned about. If the pinhole solve is degenerate, MIRRO keeps the metric v3 result rather than inventing camera parameters.
 
-The current solver is a deterministic lightweight bundle-style refinement specialized to the MIRRO planar target. It does not yet estimate lens distortion coefficients or run general sparse multi-feature bundle adjustment.
+After the v4 shared-pinhole solve, MIRRO now estimates Brown–Conrady radial/tangential coefficients (`k1`, `k2`, `k3`, `p1`, `p2`) from all four target views using regularized least squares. Distortion is activated only when it measurably reduces reprojection RMS. When activated, all four calibration frames are inverse-remapped with bilinear sampling, silhouettes/markers are extracted again, and the CameraRig is solved again in undistorted coordinates. Raw stored photos are likewise remapped at calibrated resolution before body-texture projection.
+
+The target-only distortion solve is intentionally conservative. A dedicated multi-tilt optical-calibration capture would condition higher-order lens terms more strongly than four ordinary body views.
 
 ## Garment image + calibration pipeline — implemented
 
@@ -129,6 +131,7 @@ Physical mode now defaults to a Three.js r186 scene using `WebGPURenderer`.
 - ACES filmic tone mapping is enabled.
 - real garment front/back photos are sampled through semantic UV regions.
 - the four saved body views are exposure/white-balance calibrated from segmented body pixels.
+- v5 adds a bounded 3×8 local RGB/exposure field per view; local gains stay close to the global correction to avoid aggressive recoloring.
 - the renderer builds one 360° cylindrical body atlas with overlapping angular coverage and cosine feather blending.
 - BodyMesh vertices use continuous cylindrical UVs, eliminating the previous hard material boundary between front/right/back/left.
 - `MeshPhysicalMaterial` adds fabric roughness, sheen and low clearcoat; measured density/stiffness influence the material appearance when available.
@@ -140,11 +143,16 @@ The dependency-free Canvas renderer remains as **Malha técnica** for debugging 
 
 The renderer materially improves realism, but exact visual fit still depends on capture calibration, anatomical approximation and fabric-parameter quality.
 
+## Surface reconstruction v5
+
+Body silhouettes are now sampled at 96 vertical sections instead of 64. The torso uses 48 angular segments instead of 32. Each lateral silhouette also stores a per-height contour-center profile. Opposing lateral views are mirrored/weighted into a front–back centerline shift, so torso sections no longer have to remain centered at `z=0`. The same centerline drives rendered geometry, cylindrical UVs and the elliptical-hull collision primitive.
+
+This is still silhouette-derived surface reconstruction rather than dense stereo or photogrammetric point-cloud fusion: shape that is invisible in the four outlines cannot be recovered honestly.
+
 ## Engine roadmap
 
-- Add radial/tangential lens distortion calibration and undistortion.
-- Add a dedicated optical calibration capture with multiple target tilts for stronger intrinsic conditioning.
-- Add seam-aware color transfer/local exposure fields beyond global RGB gains.
+- Add a dedicated optical calibration capture with multiple target tilts for stronger intrinsic/distortion conditioning.
+- Add local seam optimization / Poisson-style color blending beyond bounded gain fields.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
 - Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.

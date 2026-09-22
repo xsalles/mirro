@@ -156,7 +156,7 @@ export function decomposeHomography(
   const r1 = normalize(raw.r1);
   const r2Orthogonal = subtractScaled(raw.r2, r1, dot(raw.r2, r1));
   const r2 = normalize(r2Orthogonal);
-  let r3 = normalize(cross(r1, r2));
+  const r3 = normalize(cross(r1, r2));
 
   let t = raw.t;
   if (t[2] < 0) {

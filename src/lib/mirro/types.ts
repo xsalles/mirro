@@ -12,6 +12,31 @@ export type BodyMeasurements = {
   chestCm: number;
   waistCm: number;
   hipsCm: number;
+  shoulderWidthCm?: number;
+  armLengthCm?: number;
+  upperArmCm?: number;
+  thighCm?: number;
+  inseamCm?: number;
+};
+
+export type BodyViewCalibration = {
+  method: "mirro-a4-color-target-v1";
+  pixelsPerCm: number;
+  rollRadians: number;
+  perspectiveSkew: number;
+  score: number;
+  targetBounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  markerCenters: {
+    magenta: [number, number];
+    cyan: [number, number];
+    yellow: [number, number];
+    blue: [number, number];
+  };
 };
 
 export type BodySilhouette = {
@@ -27,6 +52,9 @@ export type BodySilhouette = {
   foregroundRatio: number;
   backgroundThreshold: number;
   confidence: number;
+  metricWidthProfileCm?: number[];
+  metricBodyHeightCm?: number;
+  viewCalibration?: BodyViewCalibration;
 };
 
 export type BodyPartKind =
@@ -76,7 +104,7 @@ export type BodyCollisionPrimitive =
     };
 
 export type BodyMesh = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   coordinateSystem: "x-right-y-up-z-front-centimeters";
   ringCount: number;
   segmentsPerRing: number;
@@ -104,13 +132,15 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   method:
     | "weak-perspective-elliptical-hull-v1"
-    | "weak-perspective-anatomical-primitives-v2";
+    | "weak-perspective-anatomical-primitives-v2"
+    | "metric-target-anatomical-v3";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   mesh: BodyMesh;
+  viewCalibration?: Partial<Record<BodySide, BodyViewCalibration>>;
   quality: {
     score: number;
     frontBackDifference: number;
@@ -129,6 +159,15 @@ export type BodyProfile = BodyMeasurements & {
 export type GarmentCategory = "top" | "shirt" | "hoodie" | "pants" | "shorts";
 export type FabricWeight = "light" | "medium" | "heavy";
 export type StretchLevel = "none" | "low" | "medium" | "high";
+
+export type FabricPhysicalProfile = {
+  densityGsm: number;
+  thicknessMm: number;
+  stretchWarpPct: number;
+  stretchWeftPct: number;
+  bendStiffness: number;
+  friction: number;
+};
 
 export type GarmentRowInterval = [number, number];
 
@@ -173,13 +212,17 @@ export type Garment = {
     back: MediaRef;
   };
   calibration?: GarmentCalibration;
+  physicalProfile?: FabricPhysicalProfile;
   createdAt: string;
 };
 
 export type ClothConstraintKind = "structural" | "shear" | "bend" | "seam";
 
+export type ClothConstraintAxis = "warp" | "weft" | "bias" | "none";
+
 export type ClothConstraint = {
   kind: ClothConstraintKind;
+  axis?: ClothConstraintAxis;
   a: number;
   b: number;
   restLength: number;
@@ -188,8 +231,12 @@ export type ClothConstraint = {
 
 export type ClothMaterial = {
   stretchCompliance: number;
+  stretchWarpCompliance?: number;
+  stretchWeftCompliance?: number;
   shearCompliance: number;
   bendCompliance: number;
+  densityGsm?: number;
+  particleInverseMass?: number;
   seamCompliance: number;
   damping: number;
   gravityCmPerSec2: number;

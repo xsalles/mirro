@@ -261,25 +261,31 @@ export function projectParticleOutsideBody(
   }
 
   let collided = false;
+  const projectionThickness =
+    thicknessCm + Math.max(0.04, thicknessCm * 0.2);
 
-  // Overlapping anatomical primitives meet at shoulders and hips.
-  // Repeating the union projection prevents a particle from being pushed
-  // out of one primitive directly into its neighbor.
-  for (let pass = 0; pass < 3; pass += 1) {
+  // Anatomical primitives overlap at shoulders and hips. Sequential
+  // projection can move a particle from one primitive into a neighbor, so
+  // solve the union to convergence instead of assuming a fixed three passes.
+  // The small outward safety margin also keeps thin fabrics numerically
+  // outside the body after later constraint/self-collision corrections.
+  for (let pass = 0; pass < 12; pass += 1) {
     let changedThisPass = false;
+
     for (const primitive of mesh.collisionPrimitives) {
       if (
         projectAgainstPrimitive(
           primitive,
           positions,
           particleIndex,
-          thicknessCm,
+          projectionThickness,
         )
       ) {
         collided = true;
         changedThisPass = true;
       }
     }
+
     if (!changedThisPass) break;
   }
 

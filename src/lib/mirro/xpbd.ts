@@ -25,8 +25,20 @@ function connectedPairs(mesh: GarmentMesh) {
   return pairs;
 }
 
-function complianceFor(kind: ClothConstraintKind, material: ClothMaterial) {
-  if (kind === "structural") return material.stretchCompliance;
+function complianceFor(
+  kind: ClothConstraintKind,
+  material: ClothMaterial,
+  axis: "warp" | "weft" | "bias" | "none" | undefined,
+) {
+  if (kind === "structural") {
+    if (axis === "warp") {
+      return material.stretchWarpCompliance ?? material.stretchCompliance;
+    }
+    if (axis === "weft") {
+      return material.stretchWeftCompliance ?? material.stretchCompliance;
+    }
+    return material.stretchCompliance;
+  }
   if (kind === "shear") return material.shearCompliance;
   if (kind === "bend") return material.bendCompliance;
   return material.seamCompliance;
@@ -51,7 +63,8 @@ function solveDistanceConstraint(
 
   const wa = mesh.inverseMass[a];
   const wb = mesh.inverseMass[b];
-  const alpha = complianceFor(constraint.kind, material) / (dt * dt);
+  const alpha =
+    complianceFor(constraint.kind, material, constraint.axis) / (dt * dt);
   const denominator = wa + wb + alpha;
   if (denominator <= 0) return;
 
@@ -262,6 +275,24 @@ export function simulateClothStep(params: {
 
     if (iteration % 3 === 2 || iteration === iterations - 1) {
       selfCollisions += solveGarmentSelfCollisions(mesh, material);
+
+      // Self-collision is solved after body collision and can push a fold back
+      // into an anatomical primitive. Re-project once so each solver iteration
+      // finishes satisfying the body non-penetration constraint.
+      for (let particle = 0; particle < mesh.inverseMass.length; particle += 1) {
+        if (mesh.inverseMass[particle] <= 0) continue;
+        if (
+          projectParticleOutsideBody(
+            bodyMesh,
+            mesh.positions,
+            particle,
+            material.thicknessCm,
+          )
+        ) {
+          collisions += 1;
+          applyFrictionAfterCollision(mesh, particle, material.friction);
+        }
+      }
     }
   }
 

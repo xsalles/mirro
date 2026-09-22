@@ -58,7 +58,7 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     context.globalAlpha = 0.34;
     context.lineWidth = 0.55;
 
-    const stride = mesh.version === 2 ? 2 : 1;
+    const stride = mesh.version >= 2 ? 2 : 1;
     for (let offset = 0; offset < mesh.indices.length; offset += 3 * stride) {
       const a = project(mesh.indices[offset]);
       const b = project(mesh.indices[offset + 1]);
@@ -107,9 +107,11 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.mesh.version === 2
-          ? "BodyMesh v2 por partes: torso, cabeça, braços e pernas possuem geometria e colisão próprias."
-          : "Perfil legado v1. Ao recalibrar, o MIRRO gera automaticamente a topologia anatômica v2."}
+        {calibration.mesh.version === 3
+          ? "BodyMesh v3 métrico: anatomia por partes com escala por alvo A4 e medidas avançadas quando informadas."
+          : calibration.mesh.version === 2
+            ? "BodyMesh v2 por partes: torso, cabeça, braços e pernas possuem geometria e colisão próprias."
+            : "Perfil legado v1. Ao recalibrar, o MIRRO gera automaticamente a topologia anatômica atual."}
       </figcaption>
     </figure>
   );

@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, CircleAlert, ImagePlus, ShieldCheck } from "lucide-react";
+import { Check, CircleAlert, ImagePlus, Ruler, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { BodyMeshPreview } from "@/components/body-mesh-preview";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,11 @@ export default function BodyPage() {
     chestCm: current?.chestCm ? String(current.chestCm) : "",
     waistCm: current?.waistCm ? String(current.waistCm) : "",
     hipsCm: current?.hipsCm ? String(current.hipsCm) : "",
+    shoulderWidthCm: current?.shoulderWidthCm ? String(current.shoulderWidthCm) : "",
+    armLengthCm: current?.armLengthCm ? String(current.armLengthCm) : "",
+    upperArmCm: current?.upperArmCm ? String(current.upperArmCm) : "",
+    thighCm: current?.thighCm ? String(current.thighCm) : "",
+    inseamCm: current?.inseamCm ? String(current.inseamCm) : "",
   });
   const [files, setFiles] = useState<Partial<Record<BodySide, File>>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -50,12 +56,42 @@ export default function BodyPage() {
       chestCm: Number(measurements.chestCm),
       waistCm: Number(measurements.waistCm),
       hipsCm: Number(measurements.hipsCm),
+      shoulderWidthCm: measurements.shoulderWidthCm
+        ? Number(measurements.shoulderWidthCm)
+        : undefined,
+      armLengthCm: measurements.armLengthCm
+        ? Number(measurements.armLengthCm)
+        : undefined,
+      upperArmCm: measurements.upperArmCm
+        ? Number(measurements.upperArmCm)
+        : undefined,
+      thighCm: measurements.thighCm
+        ? Number(measurements.thighCm)
+        : undefined,
+      inseamCm: measurements.inseamCm
+        ? Number(measurements.inseamCm)
+        : undefined,
     };
 
     if (!validMeasurement(parsed.heightCm, 120, 230)) nextErrors.heightCm = "Informe uma altura entre 120 e 230 cm.";
     if (!validMeasurement(parsed.chestCm, 50, 180)) nextErrors.chestCm = "Informe um tórax entre 50 e 180 cm.";
     if (!validMeasurement(parsed.waistCm, 45, 180)) nextErrors.waistCm = "Informe uma cintura entre 45 e 180 cm.";
     if (!validMeasurement(parsed.hipsCm, 50, 190)) nextErrors.hipsCm = "Informe um quadril entre 50 e 190 cm.";
+    if (parsed.shoulderWidthCm !== undefined && !validMeasurement(parsed.shoulderWidthCm, 25, 65)) {
+      nextErrors.shoulderWidthCm = "Informe uma largura de ombros entre 25 e 65 cm.";
+    }
+    if (parsed.armLengthCm !== undefined && !validMeasurement(parsed.armLengthCm, 35, 80)) {
+      nextErrors.armLengthCm = "Informe um braço entre 35 e 80 cm.";
+    }
+    if (parsed.upperArmCm !== undefined && !validMeasurement(parsed.upperArmCm, 18, 60)) {
+      nextErrors.upperArmCm = "Informe a circunferência do braço entre 18 e 60 cm.";
+    }
+    if (parsed.thighCm !== undefined && !validMeasurement(parsed.thighCm, 30, 90)) {
+      nextErrors.thighCm = "Informe a circunferência da coxa entre 30 e 90 cm.";
+    }
+    if (parsed.inseamCm !== undefined && !validMeasurement(parsed.inseamCm, 45, 110)) {
+      nextErrors.inseamCm = "Informe a entreperna entre 45 e 110 cm.";
+    }
 
     for (const side of SIDES) {
       if (!files[side.key] && !current?.photos[side.key]) {
@@ -151,10 +187,19 @@ export default function BodyPage() {
             <div>
               <h2 className="text-lg font-bold">Fotos de calibração</h2>
               <p className="mt-1 text-sm text-[var(--muted)]">
-                Mantenha a câmera na mesma altura e tente preservar a mesma escala nas quatro vistas.
+                Mantenha a câmera na mesma altura e preserve a mesma escala. Para escala métrica por vista, deixe o cartão MIRRO inteiro visível ao lado do corpo.
               </p>
             </div>
-            <span className="text-xs font-semibold text-[var(--muted)]">JPG, PNG ou WebP · até 12 MB</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link
+                href="/calibration-card"
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[var(--line)] bg-white px-3 text-xs font-semibold hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)]"
+              >
+                <Ruler size={15} aria-hidden="true" />
+                Imprimir cartão métrico
+              </Link>
+              <span className="text-xs font-semibold text-[var(--muted)]">JPG, PNG ou WebP · até 12 MB</span>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -242,6 +287,57 @@ export default function BodyPage() {
           </div>
         </section>
 
+        <section className="rounded-2xl border border-[var(--line)] bg-white p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">Medidas anatômicas avançadas</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
+                Opcionais, mas recomendadas. Elas substituem proporções médias na posição dos ombros, comprimento e espessura dos braços, coxas e pernas.
+              </p>
+            </div>
+            <span className="rounded-full bg-[var(--thread-soft)] px-3 py-1 text-xs font-semibold text-[var(--thread)]">
+              precisão v3
+            </span>
+          </div>
+
+          <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              ["shoulderWidthCm", "Ombro a ombro", "cm"],
+              ["armLengthCm", "Comprimento do braço", "cm"],
+              ["upperArmCm", "Circ. braço", "cm"],
+              ["thighCm", "Circ. coxa", "cm"],
+              ["inseamCm", "Entreperna", "cm"],
+            ].map(([key, label, unit]) => (
+              <div key={key}>
+                <label htmlFor={key} className="text-sm font-semibold">{label}</label>
+                <div className="relative mt-2">
+                  <input
+                    id={key}
+                    type="number"
+                    inputMode="decimal"
+                    min="1"
+                    aria-invalid={Boolean(errors[key])}
+                    aria-describedby={errors[key] ? `${key}-error` : undefined}
+                    value={measurements[key as keyof typeof measurements]}
+                    onChange={(e) => {
+                      setMeasurements((prev) => ({ ...prev, [key]: e.target.value }));
+                      setStatus("idle");
+                    }}
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[var(--muted)]">
+                    {unit}
+                  </span>
+                </div>
+                {errors[key] ? (
+                  <p id={`${key}-error`} className="mt-2 text-sm text-[var(--danger)]">
+                    {errors[key]}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+
         {errors.calibration ? (
           <div role="alert" className="flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-[var(--danger)]">
             <CircleAlert className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
@@ -276,10 +372,12 @@ export default function BodyPage() {
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">BodyMesh v2 anatômico pronto</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              Fusão multi-view em perspectiva fraca. Frente/costas estimam largura; laterais estimam profundidade; suas medidas corrigem tórax, cintura e quadril.
+              {calibration.version === 3
+                ? "Calibração métrica v3 ativa: o cartão A4 definiu px/cm nas quatro vistas; medidas reais refinam torso e membros."
+                : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar escala métrica v3 por vista."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-5">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -291,6 +389,12 @@ export default function BodyPage() {
               <div>
                 <dt className="text-xs font-semibold text-white/55">Triângulos</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{(calibration.mesh.indices.length / 3).toLocaleString("pt-BR")}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Alvo métrico</dt>
+                <dd className="mt-1 text-xl font-bold tabular-nums">
+                  {Object.keys(calibration.viewCalibration ?? {}).length}/4
+                </dd>
               </div>
               <div>
                 <dt className="text-xs font-semibold text-white/55">Envelope</dt>
@@ -321,7 +425,9 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica v2 e os colisores separados.
+                {calibration.version === 3
+                  ? "Alvo métrico reconhecido nas quatro vistas; BodyMesh v3 em escala métrica ativado."
+                  : "As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica v2 e os colisores separados."}
               </p>
             )}
           </div>

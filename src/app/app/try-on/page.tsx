@@ -76,7 +76,7 @@ export default function TryOnPage() {
 
   const runtimeBodyMesh = useMemo(() => {
     if (!profile?.calibration) return undefined;
-    if (profile.calibration.mesh.version === 2) {
+    if (profile.calibration.mesh.version >= 2) {
       return profile.calibration.mesh;
     }
 
@@ -87,11 +87,28 @@ export default function TryOnPage() {
         chestCm: profile.chestCm,
         waistCm: profile.waistCm,
         hipsCm: profile.hipsCm,
+        shoulderWidthCm: profile.shoulderWidthCm,
+        armLengthCm: profile.armLengthCm,
+        upperArmCm: profile.upperArmCm,
+        thighCm: profile.thighCm,
+        inseamCm: profile.inseamCm,
       },
     ).mesh;
   }, [profile]);
 
   const bodyUrl = useMediaUrl(profile?.photos.front?.key);
+  const bodyRightUrl = useMediaUrl(profile?.photos.right?.key);
+  const bodyBackUrl = useMediaUrl(profile?.photos.back?.key);
+  const bodyLeftUrl = useMediaUrl(profile?.photos.left?.key);
+  const bodyTextureUrls = useMemo(
+    () => ({
+      front: bodyUrl,
+      right: bodyRightUrl,
+      back: bodyBackUrl,
+      left: bodyLeftUrl,
+    }),
+    [bodyUrl, bodyRightUrl, bodyBackUrl, bodyLeftUrl],
+  );
   const garmentUrl = useMediaUrl(garment?.images.front.key);
   const garmentBackUrl = useMediaUrl(garment?.images.back.key);
   const fit = profile && garment ? fitGarment(profile, garment.category, 1) : null;
@@ -356,7 +373,10 @@ export default function TryOnPage() {
                   yawDegrees={yaw}
                   frontTextureUrl={garmentUrl}
                   backTextureUrl={garmentBackUrl}
+                  bodyCalibration={profile.calibration}
+                  bodyTextureUrls={bodyTextureUrls}
                   fabricWeight={garment?.fabricWeight ?? "medium"}
+                  fabricProfile={garment?.physicalProfile}
                 />
               ) : (
                 <ClothSimulationPreview

@@ -1,4 +1,8 @@
 import { buildBodyCalibration, segmentBodySilhouette, type RgbaImage } from "./body-calibration";
+import {
+  applyMetricViewCalibration,
+  detectBodyViewCalibration,
+} from "./body-camera-calibration";
 import type { BodyCalibration, BodyMeasurements, BodySide, BodySilhouette } from "./types";
 
 const MAX_PROCESSING_SIDE = 900;
@@ -42,8 +46,13 @@ export async function calibrateBodyFromPhotos(
     (Object.entries(photos) as Array<[BodySide, Blob]>).map(async ([side, blob]) => {
       try {
         const image = await decodeForCalibration(blob);
+        const viewCalibration = detectBodyViewCalibration(image);
         const { silhouette } = segmentBodySilhouette(image);
-        return [side, silhouette] as const;
+        const calibratedSilhouette = applyMetricViewCalibration(
+          silhouette,
+          viewCalibration,
+        );
+        return [side, calibratedSilhouette] as const;
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Não foi possível segmentar a imagem.";
         throw new Error(`${SIDE_LABELS[side]}: ${detail}`);

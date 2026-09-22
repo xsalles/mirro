@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type {
+  BodyCalibration,
   BodyMesh,
+  BodySide,
+  FabricPhysicalProfile,
   FabricWeight,
   GarmentMesh,
 } from "@/lib/mirro/types";
@@ -19,8 +22,8 @@ type SceneRuntime = {
   backGeometry: InstanceType<ThreeModule["BufferGeometry"]>;
   frontMaterial: InstanceType<ThreeModule["MeshPhysicalMaterial"]>;
   backMaterial: InstanceType<ThreeModule["MeshPhysicalMaterial"]>;
-  bodyGeometry: InstanceType<ThreeModule["BufferGeometry"]>;
-  bodyMaterial: InstanceType<ThreeModule["MeshPhysicalMaterial"]>;
+  bodyGeometries: Array<InstanceType<ThreeModule["BufferGeometry"]>>;
+  bodyMaterials: Array<InstanceType<ThreeModule["MeshPhysicalMaterial"]>>;
   textures: Array<InstanceType<ThreeModule["Texture"]>>;
   resizeObserver: ResizeObserver;
 };
@@ -44,14 +47,146 @@ function indicesForSide(mesh: GarmentMesh, side: 0 | 1) {
   return indices;
 }
 
-function clothLook(weight: FabricWeight) {
-  if (weight === "light") {
-    return { roughness: 0.58, sheen: 0.5, sheenRoughness: 0.45 };
+
+function bodyTriangleSide(mesh: BodyMesh, triangleOffset: number): BodySide {
+  const ia = mesh.indices[triangleOffset];
+  const ib = mesh.indices[triangleOffset + 1];
+  const ic = mesh.indices[triangleOffset + 2];
+  const vertices = [ia, ib, ic];
+
+  let nx = 0;
+  let nz = 0;
+  let px = 0;
+  let pz = 0;
+
+  for (const vertex of vertices) {
+    nx += mesh.normals[vertex * 3] ?? 0;
+    nz += mesh.normals[vertex * 3 + 2] ?? 0;
+    px += mesh.vertices[vertex * 3] ?? 0;
+    pz += mesh.vertices[vertex * 3 + 2] ?? 0;
   }
-  if (weight === "heavy") {
-    return { roughness: 0.86, sheen: 0.18, sheenRoughness: 0.82 };
+
+  if (Math.abs(nx) + Math.abs(nz) < 0.08) {
+    nx = px / 3;
+    nz = pz / 3;
   }
-  return { roughness: 0.72, sheen: 0.32, sheenRoughness: 0.64 };
+
+  if (Math.abs(nz) >= Math.abs(nx)) return nz >= 0 ? "front" : "back";
+  return nx >= 0 ? "right" : "left";
+}
+
+function bodyIndicesForSide(mesh: BodyMesh, side: BodySide) {
+  const indices: number[] = [];
+  for (let offset = 0; offset < mesh.indices.length; offset += 3) {
+    if (bodyTriangleSide(mesh, offset) !== side) continue;
+    indices.push(
+      mesh.indices[offset],
+      mesh.indices[offset + 1],
+      mesh.indices[offset + 2],
+    );
+  }
+  return indices;
+}
+
+function bodyUvs(
+  mesh: BodyMesh,
+  calibration: BodyCalibration | undefined,
+  side: BodySide,
+) {
+  const silhouette = calibration?.silhouettes[side];
+  const uv = new Array<number>((mesh.vertices.length / 3) * 2).fill(0);
+  const halfHeight = mesh.boundsCm.height / 2;
+
+  for (let vertex = 0; vertex < mesh.vertices.length / 3; vertex += 1) {
+    const offset = vertex * 3;
+    const x = mesh.vertices[offset];
+    const y = mesh.vertices[offset + 1];
+    const z = mesh.vertices[offset + 2];
+    const vertical = Math.min(
+      1,
+      Math.max(0, (halfHeight - y) / Math.max(1, mesh.boundsCm.height)),
+    );
+
+    const profile = silhouette?.widthProfile;
+    const profilePosition = vertical * Math.max(0, (profile?.length ?? 1) - 1);
+    const profileLow = Math.floor(profilePosition);
+    const profileHigh = Math.min(
+      Math.max(0, (profile?.length ?? 1) - 1),
+      profileLow + 1,
+    );
+    const profileMix = profilePosition - profileLow;
+    const normalizedRowWidth = profile
+      ? (profile[profileLow] ?? 0) +
+        ((profile[profileHigh] ?? profile[profileLow] ?? 0) -
+          (profile[profileLow] ?? 0)) *
+          profileMix
+      : 1;
+    const rowPhysicalWidth =
+      silhouette?.metricWidthProfileCm
+        ? (silhouette.metricWidthProfileCm[profileLow] ?? mesh.boundsCm.width)
+        : Math.max(1, normalizedRowWidth * mesh.boundsCm.height);
+    const horizontalCoordinate =
+      side === "front"
+        ? -x
+        : side === "back"
+          ? x
+          : side === "right"
+            ? z
+            : -z;
+    const horizontal = Math.min(
+      1,
+      Math.max(
+        0,
+        0.5 + horizontalCoordinate / Math.max(1, rowPhysicalWidth),
+      ),
+    );
+
+    if (silhouette) {
+      const rowWidthPixels = Math.max(
+        1,
+        normalizedRowWidth * silhouette.bounds.height,
+      );
+      const centerX = silhouette.bounds.x + silhouette.bounds.width / 2;
+      const sourceX =
+        centerX + (horizontal - 0.5) * rowWidthPixels;
+      uv[vertex * 2] =
+        Math.min(
+          silhouette.sourceWidth - 1,
+          Math.max(0, sourceX),
+        ) / silhouette.sourceWidth;
+      uv[vertex * 2 + 1] =
+        (silhouette.bounds.y +
+          vertical * Math.max(1, silhouette.bounds.height - 1)) /
+        silhouette.sourceHeight;
+    } else {
+      uv[vertex * 2] = horizontal;
+      uv[vertex * 2 + 1] = vertical;
+    }
+  }
+
+  return uv;
+}
+
+function clothLook(
+  weight: FabricWeight,
+  profile?: FabricPhysicalProfile,
+) {
+  const fallback =
+    weight === "light"
+      ? { roughness: 0.58, sheen: 0.5, sheenRoughness: 0.45 }
+      : weight === "heavy"
+        ? { roughness: 0.86, sheen: 0.18, sheenRoughness: 0.82 }
+        : { roughness: 0.72, sheen: 0.32, sheenRoughness: 0.64 };
+
+  if (!profile) return fallback;
+
+  const density = Math.min(1, Math.max(0, (profile.densityGsm - 80) / 360));
+  const stiffness = Math.min(1, Math.max(0, profile.bendStiffness / 100));
+  return {
+    roughness: Math.min(0.94, Math.max(0.48, 0.58 + density * 0.24)),
+    sheen: Math.min(0.65, Math.max(0.12, 0.52 - density * 0.26)),
+    sheenRoughness: Math.min(0.9, Math.max(0.38, 0.48 + stiffness * 0.34)),
+  };
 }
 
 export function ThreePbrPreview({
@@ -61,7 +196,10 @@ export function ThreePbrPreview({
   yawDegrees,
   frontTextureUrl,
   backTextureUrl,
+  bodyCalibration,
+  bodyTextureUrls,
   fabricWeight,
+  fabricProfile,
 }: {
   bodyMesh: BodyMesh;
   garmentMesh: GarmentMesh;
@@ -69,7 +207,10 @@ export function ThreePbrPreview({
   yawDegrees: number;
   frontTextureUrl: string | null;
   backTextureUrl: string | null;
+  bodyCalibration?: BodyCalibration;
+  bodyTextureUrls?: Partial<Record<BodySide, string | null>>;
   fabricWeight: FabricWeight;
+  fabricProfile?: FabricPhysicalProfile;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<SceneRuntime | null>(null);
@@ -116,28 +257,57 @@ export function ThreePbrPreview({
       const group = new THREE.Group();
       scene.add(group);
 
-      const bodyGeometry = new THREE.BufferGeometry();
-      bodyGeometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(bodyMesh.vertices, 3),
-      );
-      bodyGeometry.setAttribute(
-        "normal",
-        new THREE.Float32BufferAttribute(bodyMesh.normals, 3),
-      );
-      bodyGeometry.setIndex(bodyMesh.indices);
+      const textures: Array<InstanceType<ThreeModule["Texture"]>> = [];
+      const loader = new THREE.TextureLoader();
 
-      const bodyMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0xc9b6aa,
-        roughness: 0.8,
-        metalness: 0,
-        sheen: 0.12,
-        sheenRoughness: 0.8,
-      });
-      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-      body.castShadow = true;
-      body.receiveShadow = true;
-      group.add(body);
+      const loadTexture = (url: string | null | undefined) => {
+        if (!url) return null;
+        const texture = loader.load(url);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = 8;
+        textures.push(texture);
+        return texture;
+      };
+
+      const bodyGeometries: Array<InstanceType<ThreeModule["BufferGeometry"]>> = [];
+      const bodyMaterials: Array<InstanceType<ThreeModule["MeshPhysicalMaterial"]>> = [];
+
+      for (const side of ["front", "right", "back", "left"] as const) {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(bodyMesh.vertices, 3),
+        );
+        geometry.setAttribute(
+          "normal",
+          new THREE.Float32BufferAttribute(bodyMesh.normals, 3),
+        );
+        geometry.setAttribute(
+          "uv",
+          new THREE.Float32BufferAttribute(
+            bodyUvs(bodyMesh, bodyCalibration, side),
+            2,
+          ),
+        );
+        geometry.setIndex(bodyIndicesForSide(bodyMesh, side));
+
+        const texture = loadTexture(bodyTextureUrls?.[side]);
+        const material = new THREE.MeshPhysicalMaterial({
+          map: texture,
+          color: texture ? 0xffffff : 0xc9b6aa,
+          roughness: 0.82,
+          metalness: 0,
+          sheen: 0.1,
+          sheenRoughness: 0.82,
+          side: THREE.DoubleSide,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        bodyGeometries.push(geometry);
+        bodyMaterials.push(material);
+      }
 
       const makeGarmentGeometry = (side: 0 | 1) => {
         const geometry = new THREE.BufferGeometry();
@@ -156,21 +326,9 @@ export function ThreePbrPreview({
 
       const frontGeometry = makeGarmentGeometry(0);
       const backGeometry = makeGarmentGeometry(1);
-      const textures: Array<InstanceType<ThreeModule["Texture"]>> = [];
-      const loader = new THREE.TextureLoader();
-
-      const loadTexture = (url: string | null) => {
-        if (!url) return null;
-        const texture = loader.load(url);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.anisotropy = 8;
-        textures.push(texture);
-        return texture;
-      };
-
       const frontTexture = loadTexture(frontTextureUrl);
       const backTexture = loadTexture(backTextureUrl);
-      const look = clothLook(fabricWeight);
+      const look = clothLook(fabricWeight, fabricProfile);
 
       const makeMaterial = (
         texture: InstanceType<ThreeModule["Texture"]> | null,
@@ -259,8 +417,8 @@ export function ThreePbrPreview({
         backGeometry,
         frontMaterial,
         backMaterial,
-        bodyGeometry,
-        bodyMaterial,
+        bodyGeometries,
+        bodyMaterials,
         textures,
         resizeObserver,
       };
@@ -284,10 +442,10 @@ export function ThreePbrPreview({
       runtime.resizeObserver.disconnect();
       runtime.frontGeometry.dispose();
       runtime.backGeometry.dispose();
-      runtime.bodyGeometry.dispose();
+      for (const geometry of runtime.bodyGeometries) geometry.dispose();
       runtime.frontMaterial.dispose();
       runtime.backMaterial.dispose();
-      runtime.bodyMaterial.dispose();
+      for (const material of runtime.bodyMaterials) material.dispose();
       for (const texture of runtime.textures) texture.dispose();
       runtime.renderer.dispose();
       host.replaceChildren();
@@ -297,7 +455,10 @@ export function ThreePbrPreview({
     garmentMesh,
     frontTextureUrl,
     backTextureUrl,
+    bodyCalibration,
+    bodyTextureUrls,
     fabricWeight,
+    fabricProfile,
   ]);
 
   useEffect(() => {
@@ -346,7 +507,7 @@ export function ThreePbrPreview({
             : "Inicializando PBR…"}
       </div>
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        Perspectiva, depth buffer, PBR, iluminação de estúdio, roughness e sheen do tecido. WebGPU é preferido; o próprio renderer cai para WebGL2 quando necessário.
+        Corpo texturizado pelas quatro vistas, perspectiva, depth buffer e PBR do tecido. WebGPU é preferido; o renderer mantém fallback WebGL2.
       </figcaption>
     </figure>
   );

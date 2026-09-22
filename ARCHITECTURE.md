@@ -21,9 +21,18 @@ Next.js App Router + React client components for local-only workflows. IndexedDB
 
 BodyMesh v2 is deterministic and anatomical enough for separate sleeve/leg collision, while still remaining a parametric reconstruction rather than a full photogrammetric scan. Existing v1 profiles remain readable and are rebuilt as v2 in memory when try-on starts.
 
-## Camera model
+## Camera model — metric target v3 implemented
 
-The current calibration uses weak-perspective normalization: each view is independently scaled by detected body height, which reduces moderate camera-distance differences. This is not a calibrated pinhole-camera reconstruction. A later capture protocol can add known camera intrinsics/extrinsics or fiducial markers without changing the BodyMesh contract.
+MIRRO now ships a printable A4 target with four chromatic square fiducials at known center-to-center distances (158 mm horizontal, 245 mm vertical). Classical color segmentation detects the four markers locally in each body photo and derives:
+
+- pixels per centimeter
+- image roll
+- perspective skew estimate
+- per-view calibration score
+
+If front, back, left and right all contain a valid target, normalized silhouette widths are converted to observed centimeters before BodyMesh construction and the calibration becomes `metric-target-anatomical-v3`. The target must be kept in the same depth plane as the body. Missing/partial targets automatically fall back to the existing weak-perspective v2 path.
+
+This is a metric planar reference, not a complete pinhole intrinsic/extrinsic solve or multi-view bundle adjustment.
 
 ## Garment image + calibration pipeline — implemented
 
@@ -82,10 +91,16 @@ The local solver uses Verlet-style integration plus XPBD distance constraints:
 - BodyMesh collision every solver iteration
 - garment self-collision using a 3D spatial hash
 
-Garment metadata maps to material parameters:
+Garment metadata maps to material parameters. New garments store an explicit physical profile:
 
-- **stretch level** controls structural/shear compliance
-- **fabric weight** controls bend compliance, damping and collision thickness
+- density in g/m²
+- thickness in mm
+- warp stretch %
+- weft stretch %
+- bend stiffness (0–100)
+- friction
+
+Structural constraints are tagged as warp or weft; XPBD selects separate compliance for each axis. Density scales particle inverse mass, while thickness feeds collision distance. Legacy/simple weight + stretch inputs still generate deterministic physical presets.
 
 The try-on runs 144 simulation steps in a dedicated Web Worker. It sends bounded position snapshots back to the UI for determinate progress and preview refreshes. Browsers without Worker support fall back to small `requestAnimationFrame` batches.
 
@@ -112,7 +127,8 @@ Physical mode now defaults to a Three.js r186 scene using `WebGPURenderer`.
 - real depth buffer occludes front/back/body surfaces correctly.
 - ACES filmic tone mapping is enabled.
 - real garment front/back photos are sampled through semantic UV regions.
-- `MeshPhysicalMaterial` adds fabric roughness, sheen and low clearcoat.
+- body triangles are partitioned by surface orientation (front/back/right/left) and sample the corresponding saved body photo through silhouette-derived UVs.
+- `MeshPhysicalMaterial` adds fabric roughness, sheen and low clearcoat; measured density/stiffness influence the material appearance when available.
 - light / medium / heavy fabric presets affect the PBR appearance as well as physics.
 - studio hemisphere, key, fill and rim lights provide shape readability.
 - body and garment cast/receive shadows on a neutral studio floor.
@@ -123,10 +139,10 @@ The renderer materially improves realism, but exact visual fit still depends on 
 
 ## Engine roadmap
 
-- Add explicit camera calibration / capture fiducials for metric multi-view reconstruction.
-- Improve limb/body proportions from additional user measurements instead of anthropometric defaults.
-- Add multi-view body texture projection so the anatomical avatar can visually resemble the person, not only their dimensions.
-- Add measured fabric presets (warp/weft stretch, bending, density) beyond light/medium/heavy.
+- Upgrade planar target calibration to a full pinhole intrinsic/extrinsic solve and bundle adjustment.
+- Add seam blending/exposure matching between the four projected body textures.
+- Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
+- Add fabric libraries/material sheets so common compositions can auto-fill measured physical profiles.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.
 - Move the Worker solver to WASM when mesh density or semantic topology increases substantially.
 - Add optional environment-map based image-based lighting and higher-quality soft shadows.

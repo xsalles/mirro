@@ -83,6 +83,10 @@ export function analyzeAlphaSilhouette(
   };
   const widthProfile = new Array<number>(sampleCount).fill(0);
   const centerProfile = new Array<number>(sampleCount).fill(0);
+  const intervalProfile: Array<Array<[number, number]>> = Array.from(
+    { length: sampleCount },
+    () => [],
+  );
   const boundsCenter = bounds.x + bounds.width / 2;
 
   for (let sample = 0; sample < sampleCount; sample += 1) {
@@ -117,6 +121,28 @@ export function analyzeAlphaSilhouette(
       widthProfile[sample] = (rowMax - rowMin + 1) / bounds.width;
       centerProfile[sample] = ((weightedCenter / rows) - boundsCenter) / bounds.width;
     }
+
+    const runs: Array<[number, number]> = [];
+    let runStart = -1;
+    for (let x = bounds.x; x < bounds.x + bounds.width; x += 1) {
+      const occupied = image.alpha[centerY * image.width + x] >= threshold;
+      if (occupied && runStart < 0) runStart = x;
+      if ((!occupied || x === bounds.x + bounds.width - 1) && runStart >= 0) {
+        const runEnd = occupied && x === bounds.x + bounds.width - 1 ? x : x - 1;
+        if (runEnd - runStart + 1 >= Math.max(2, bounds.width * 0.025)) {
+          runs.push([
+            (runStart - bounds.x) / bounds.width,
+            (runEnd - bounds.x + 1) / bounds.width,
+          ]);
+        }
+        runStart = -1;
+      }
+    }
+
+    intervalProfile[sample] = runs
+      .sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))
+      .slice(0, 2)
+      .sort((a, b) => a[0] - b[0]);
   }
 
   return {
@@ -125,6 +151,7 @@ export function analyzeAlphaSilhouette(
     bounds,
     widthProfile: smooth(fillGaps(widthProfile), 2),
     centerProfile: smooth(centerProfile, 2),
+    intervalProfile,
     occupancyRatio: foreground / Math.max(1, bounds.width * bounds.height),
   };
 }

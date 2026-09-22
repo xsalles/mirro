@@ -7,15 +7,16 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - 4-view body capture + real measurements
 - Classical connected-background body silhouette extraction
 - Confidence-weighted multi-view body calibration
-- Anatomical centimeter-based BodyMesh v2 with separate torso, head, arms and legs
+- Anatomical BodyMesh v3 with optional A4 metric target, separate torso/head/arms/legs and advanced limb measurements
 - Garment front/back alpha calibration from the user's real photos
 - Semantic GarmentMesh: torso + sleeves for tops; waistband + split legs/crotch for bottoms
 - XPBD structural / shear / bend / seam constraints
 - Web Worker simulation with main-thread fallback
+- Anisotropic fabric physics: g/m², thickness, warp/weft stretch, bend stiffness and friction
 - BodyMesh collision, spatial-hash garment self-collision, damping, friction approximation and fabric presets
 - Interactive physical 3D beta preview with simulation progress
 - Real front/back garment textures warped over semantic solved UV regions
-- Three.js PBR preview with WebGPU-first rendering and WebGL2 fallback
+- Three.js PBR preview with WebGPU-first rendering, WebGL2 fallback and four-view body texture projection
 - Photo-based 2D fallback
 - IndexedDB-only private local storage
 - Responsive product shell

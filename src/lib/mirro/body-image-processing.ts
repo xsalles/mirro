@@ -3,7 +3,10 @@ import {
   applyMetricViewCalibration,
   detectBodyViewCalibration,
 } from "./body-camera-calibration";
-import { solveBodyCameraRig } from "./camera-rig";
+import {
+  rectifySilhouetteWithPinhole,
+  solveBodyCameraRig,
+} from "./camera-rig";
 import { analyzeBodyTextureCalibration } from "./body-texture-calibration";
 import type { BodyCalibration, BodyMeasurements, BodySide, BodySilhouette } from "./types";
 
@@ -105,10 +108,10 @@ export async function calibrateBodyFromPhotos(
       calibratedViews = solved.calibrations;
 
       for (const side of Object.keys(silhouettes) as BodySide[]) {
-        silhouettes[side] = {
-          ...silhouettes[side],
-          viewCalibration: calibratedViews[side],
-        };
+        silhouettes[side] = rectifySilhouetteWithPinhole(
+          silhouettes[side],
+          calibratedViews[side],
+        );
       }
     } catch {
       // The metric v3 path remains valid if the shared pinhole solve is

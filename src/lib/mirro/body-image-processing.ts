@@ -93,6 +93,7 @@ export async function calibrateBodyFromPhotos(
   );
 
   let cameraRig;
+  let cameraSolveWarning: string | null = null;
   let calibratedViews:
     | Record<BodySide, NonNullable<(typeof entries)[number]["viewCalibration"]>>
     | undefined;
@@ -114,8 +115,8 @@ export async function calibrateBodyFromPhotos(
         );
       }
     } catch {
-      // The metric v3 path remains valid if the shared pinhole solve is
-      // numerically degenerate (for example, four nearly frontal targets).
+      cameraSolveWarning =
+        "As quatro vistas têm escala métrica, mas a solução pinhole ficou degenerada. O MIRRO manteve o BodyMesh métrico v3; varie mais a perspectiva do cartão para recuperar intrínsecos e poses.";
     }
   }
 
@@ -125,6 +126,15 @@ export async function calibrateBodyFromPhotos(
     return {
       ...base,
       textureCalibration,
+      quality: cameraSolveWarning
+        ? {
+            ...base.quality,
+            warnings: [
+              ...base.quality.warnings,
+              cameraSolveWarning,
+            ],
+          }
+        : base.quality,
     };
   }
 

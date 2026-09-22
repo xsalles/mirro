@@ -166,8 +166,13 @@ export type BodyVisualHull = {
     height: number;
     depth: number;
   };
+  originCm: [number, number, number];
   voxelSizeCm: number;
   occupiedVoxelCount: number;
+  occupancyRle: {
+    start: 0 | 1;
+    runs: number[];
+  };
   vertices: number[];
   normals: number[];
   indices: number[];

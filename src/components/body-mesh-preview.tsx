@@ -107,11 +107,13 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.mesh.version === 3
-          ? "BodyMesh v3 métrico: anatomia por partes com escala por alvo A4 e medidas avançadas quando informadas."
-          : calibration.mesh.version === 2
-            ? "BodyMesh v2 por partes: torso, cabeça, braços e pernas possuem geometria e colisão próprias."
-            : "Perfil legado v1. Ao recalibrar, o MIRRO gera automaticamente a topologia anatômica atual."}
+        {calibration.mesh.version === 4
+          ? "BodyMesh v4: torso 96×48 com linha central frente–costas derivada das laterais; UV e colisão acompanham a assimetria observada."
+          : calibration.mesh.version === 3
+            ? "BodyMesh v3 métrico: anatomia por partes com escala por alvo A4 e medidas avançadas quando informadas."
+            : calibration.mesh.version === 2
+              ? "BodyMesh v2 por partes: torso, cabeça, braços e pernas possuem geometria e colisão próprias."
+              : "Perfil legado v1. Ao recalibrar, o MIRRO gera automaticamente a topologia anatômica atual."}
       </figcaption>
     </figure>
   );

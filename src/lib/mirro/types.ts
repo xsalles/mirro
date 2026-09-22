@@ -214,6 +214,8 @@ export type BodyVisualHull = {
     meanInwardOffsetCm: number;
     maxInwardOffsetCm: number;
     meanRelativeImprovement: number;
+    surfaceVertices?: number[];
+    surfaceNormals?: number[];
   };
 };
 

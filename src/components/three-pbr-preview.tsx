@@ -167,7 +167,11 @@ export function ThreePbrPreview({
       bodyGeometry.setAttribute(
         "uv",
         new THREE.Float32BufferAttribute(
-          bodyAtlasUvs(bodyMesh.vertices, bodyMesh.boundsCm.height),
+          bodyAtlasUvs(
+            bodyMesh.vertices,
+            bodyMesh.boundsCm.height,
+            bodyMesh.centerZProfile,
+          ),
           2,
         ),
       );

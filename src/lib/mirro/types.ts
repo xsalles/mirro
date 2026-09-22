@@ -236,6 +236,7 @@ export type ClothMaterial = {
   shearCompliance: number;
   bendCompliance: number;
   densityGsm?: number;
+  particleInverseMass?: number;
   seamCompliance: number;
   damping: number;
   gravityCmPerSec2: number;

@@ -158,11 +158,37 @@ function rowGeometry(
 }
 
 function pixelToViewCoordinates(
-  silhouette: BodySilhouette,
+  view: MvsView,
   bodyHeightCm: number,
   pixelX: number,
   pixelY: number,
+  depthCm: number,
 ) {
+  if (view.camera) {
+    const { intrinsics, distanceCm } = view.camera;
+    const cameraDepth = Math.max(
+      1,
+      distanceCm - depthCm,
+    );
+    return {
+      horizontalCm:
+        view.camera.horizontalOffsetCm +
+        ((pixelX - intrinsics.cx) * cameraDepth) /
+          Math.max(1e-6, intrinsics.fx),
+      y:
+        view.camera.verticalOffsetCm -
+        ((pixelY - intrinsics.cy) * cameraDepth) /
+          Math.max(1e-6, intrinsics.fy),
+      vertical: clamp(
+        (pixelY - view.silhouette.bounds.y) /
+          Math.max(1, view.silhouette.bounds.height - 1),
+        0,
+        1,
+      ),
+    };
+  }
+
+  const silhouette = view.silhouette;
   const vertical = clamp(
     (pixelY - silhouette.bounds.y) /
       Math.max(1, silhouette.bounds.height - 1),
@@ -227,13 +253,48 @@ function worldHorizontal(
 }
 
 function worldToPixel(
-  view: BodyViewId,
-  silhouette: BodySilhouette,
+  viewId: BodyViewId,
+  view: MvsView,
   bodyHeightCm: number,
   x: number,
   y: number,
   z: number,
 ) {
+  const depthCm = worldDepth(viewId, x, z);
+  const horizontalCm = worldHorizontal(
+    viewId,
+    x,
+    z,
+  );
+
+  if (view.camera) {
+    const { intrinsics, distanceCm } = view.camera;
+    const cameraDepth = distanceCm - depthCm;
+    if (cameraDepth <= 1) {
+      return {
+        x: Number.POSITIVE_INFINITY,
+        y: Number.POSITIVE_INFINITY,
+        depthCm,
+      };
+    }
+
+    return {
+      x:
+        intrinsics.cx +
+        (intrinsics.fx *
+          (horizontalCm -
+            view.camera.horizontalOffsetCm)) /
+          cameraDepth,
+      y:
+        intrinsics.cy -
+        (intrinsics.fy *
+          (y - view.camera.verticalOffsetCm)) /
+          cameraDepth,
+      depthCm,
+    };
+  }
+
+  const silhouette = view.silhouette;
   const vertical = clamp(
     (bodyHeightCm / 2 - y) /
       Math.max(1, bodyHeightCm),
@@ -245,11 +306,6 @@ function worldToPixel(
     bodyHeightCm,
     vertical,
   );
-  const horizontalCm = worldHorizontal(
-    view,
-    x,
-    z,
-  );
 
   return {
     x:
@@ -260,7 +316,7 @@ function worldToPixel(
       silhouette.bounds.y +
       vertical *
         Math.max(1, silhouette.bounds.height - 1),
-    depthCm: worldDepth(view, x, z),
+    depthCm,
   };
 }
 

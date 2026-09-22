@@ -1,6 +1,8 @@
 "use client";
 
+import { undistortRgbaImage } from "./lens-distortion";
 import type {
+  BodyCameraRig,
   BodySide,
   BodySilhouette,
   BodyTextureCalibration,
@@ -164,6 +166,7 @@ export async function buildBodyTextureAtlas(params: {
   urls: Partial<Record<BodySide, string | null>>;
   silhouettes: Record<BodySide, BodySilhouette>;
   textureCalibration?: BodyTextureCalibration;
+  cameraRig?: BodyCameraRig;
   width?: number;
   height?: number;
 }) {
@@ -173,7 +176,18 @@ export async function buildBodyTextureAtlas(params: {
     SIDES.map(async (side) => {
       const url = params.urls[side];
       if (!url) return [side, null] as const;
-      return [side, await loadImage(url)] as const;
+      const source = await loadImage(url);
+      if (params.cameraRig?.distortion) {
+        return [
+          side,
+          undistortRgbaImage(
+            source,
+            params.cameraRig.intrinsics,
+            params.cameraRig.distortion,
+          ),
+        ] as const;
+      }
+      return [side, source] as const;
     }),
   );
   const sources = Object.fromEntries(loadedEntries) as Partial<

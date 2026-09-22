@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { RgbaImage } from "../src/lib/mirro/body-calibration";
-import { buildClassicalMultiViewStereo } from "../src/lib/mirro/body-mvs";
+import {
+  buildClassicalMultiViewStereo,
+  type MultiViewStereoDiagnostics,
+} from "../src/lib/mirro/body-mvs";
 import {
   BODY_VIEW_ANGLE_RAD,
   BODY_VIEW_SEQUENCE,
@@ -294,6 +297,13 @@ describe("calibrated perspective turntable MVS", () => {
       ReturnType<typeof syntheticPerspectiveView>
     >;
 
+    const diagnostics: MultiViewStereoDiagnostics = {
+      validDepthCount: 0,
+      meanConfidence: 0,
+      crossViewConsistency: 0,
+      surfaceTriangleCount: 0,
+      rejection: "none",
+    };
     const mvs = buildClassicalMultiViewStereo({
       hull: hull(),
       images: Object.fromEntries(
@@ -311,10 +321,14 @@ describe("calibrated perspective turntable MVS", () => {
       silhouettes,
       bodyHeightCm: BODY_HEIGHT_CM,
       optics: optics(),
+      diagnostics,
     });
 
-    expect(mvs).not.toBeNull();
-    if (!mvs) return;
+    if (!mvs) {
+      throw new Error(
+        `Perspective MVS diagnostics: ${JSON.stringify(diagnostics)}`,
+      );
+    }
 
     expect(mvs.projectionModel).toBe(
       "calibrated-turntable-perspective",

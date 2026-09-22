@@ -3,6 +3,8 @@ import {
   applyMetricViewCalibration,
   detectBodyViewCalibration,
 } from "./body-camera-calibration";
+import { solveBodyCameraRig } from "./camera-rig";
+import { analyzeBodyTextureCalibration } from "./body-texture-calibration";
 import type { BodyCalibration, BodyMeasurements, BodySide, BodySilhouette } from "./types";
 
 const MAX_PROCESSING_SIDE = 900;
@@ -47,12 +49,18 @@ export async function calibrateBodyFromPhotos(
       try {
         const image = await decodeForCalibration(blob);
         const viewCalibration = detectBodyViewCalibration(image);
-        const { silhouette } = segmentBodySilhouette(image);
+        const segmented = segmentBodySilhouette(image);
         const calibratedSilhouette = applyMetricViewCalibration(
-          silhouette,
+          segmented.silhouette,
           viewCalibration,
         );
-        return [side, calibratedSilhouette] as const;
+        return {
+          side,
+          image,
+          mask: segmented.mask,
+          silhouette: calibratedSilhouette,
+          viewCalibration,
+        };
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Não foi possível segmentar a imagem.";
         throw new Error(`${SIDE_LABELS[side]}: ${detail}`);
@@ -60,6 +68,84 @@ export async function calibrateBodyFromPhotos(
     }),
   );
 
-  const silhouettes = Object.fromEntries(entries) as Record<BodySide, BodySilhouette>;
-  return buildBodyCalibration(silhouettes, measurements);
+  const silhouettes = Object.fromEntries(
+    entries.map((entry) => [entry.side, entry.silhouette]),
+  ) as Record<BodySide, BodySilhouette>;
+  const images = Object.fromEntries(
+    entries.map((entry) => [entry.side, entry.image]),
+  ) as Record<BodySide, RgbaImage>;
+  const masks = Object.fromEntries(
+    entries.map((entry) => [entry.side, entry.mask]),
+  ) as Record<BodySide, Uint8Array>;
+
+  const textureCalibration = analyzeBodyTextureCalibration({
+    images,
+    masks,
+    silhouettes,
+  });
+
+  const viewEntries = entries.filter(
+    (entry): entry is typeof entry & { viewCalibration: NonNullable<typeof entry.viewCalibration> } =>
+      Boolean(entry.viewCalibration),
+  );
+
+  let cameraRig;
+  let calibratedViews:
+    | Record<BodySide, NonNullable<(typeof entries)[number]["viewCalibration"]>>
+    | undefined;
+
+  if (viewEntries.length === 4) {
+    const sourceViews = Object.fromEntries(
+      viewEntries.map((entry) => [entry.side, entry.viewCalibration]),
+    ) as Record<BodySide, NonNullable<(typeof entries)[number]["viewCalibration"]>>;
+
+    try {
+      const solved = solveBodyCameraRig(sourceViews);
+      cameraRig = solved.rig;
+      calibratedViews = solved.calibrations;
+
+      for (const side of Object.keys(silhouettes) as BodySide[]) {
+        silhouettes[side] = {
+          ...silhouettes[side],
+          viewCalibration: calibratedViews[side],
+        };
+      }
+    } catch {
+      // The metric v3 path remains valid if the shared pinhole solve is
+      // numerically degenerate (for example, four nearly frontal targets).
+    }
+  }
+
+  const base = buildBodyCalibration(silhouettes, measurements);
+
+  if (!cameraRig || !calibratedViews) {
+    return {
+      ...base,
+      textureCalibration,
+    };
+  }
+
+  const warnings = [
+    ...base.quality.warnings,
+    ...cameraRig.warnings,
+  ];
+
+  return {
+    ...base,
+    version: 4,
+    method: "pinhole-bundle-anatomical-v4",
+    viewCalibration: calibratedViews,
+    cameraRig,
+    textureCalibration,
+    quality: {
+      ...base.quality,
+      score: Math.min(
+        1,
+        base.quality.score * 0.72 +
+          Math.max(0, 1 - cameraRig.rmsReprojectionErrorPx / 5) * 0.18 +
+          textureCalibration.score * 0.1,
+      ),
+      warnings: [...new Set(warnings)],
+    },
+  };
 }

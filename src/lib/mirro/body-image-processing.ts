@@ -406,32 +406,37 @@ export async function calibrateBodyFromPhotos(
         );
 
         if (hasAllDenseInputs) {
-          const multiViewStereo =
-            buildClassicalMultiViewStereo({
-              hull: visualHull,
-              images: denseImages as Record<
-                BodyViewId,
-                RgbaImage
-              >,
-              masks: denseMasks as Record<
-                BodyViewId,
-                Uint8Array
-              >,
-              silhouettes: denseSilhouettes as Record<
-                BodyViewId,
-                BodySilhouette
-              >,
-              bodyHeightCm: measurements.heightCm,
-            });
+          try {
+            const multiViewStereo =
+              buildClassicalMultiViewStereo({
+                hull: visualHull,
+                images: denseImages as Record<
+                  BodyViewId,
+                  RgbaImage
+                >,
+                masks: denseMasks as Record<
+                  BodyViewId,
+                  Uint8Array
+                >,
+                silhouettes: denseSilhouettes as Record<
+                  BodyViewId,
+                  BodySilhouette
+                >,
+                bodyHeightCm: measurements.heightCm,
+              });
 
-          if (multiViewStereo) {
-            visualHull = {
-              ...visualHull,
-              multiViewStereo,
-            };
-          } else {
+            if (multiViewStereo) {
+              visualHull = {
+                ...visualHull,
+                multiViewStereo,
+              };
+            } else {
+              multiViewStereoWarning =
+                "As oito vistas não tiveram textura/correspondência suficiente para gerar um TSDF MVS confiável; o MIRRO manteve o visual hull + SDF.";
+            }
+          } catch {
             multiViewStereoWarning =
-              "As oito vistas não tiveram textura/correspondência suficiente para gerar um TSDF MVS confiável; o MIRRO manteve o visual hull + SDF.";
+              "O estágio MVS não convergiu com segurança; o MIRRO preservou o visual hull + SDF v7 sem alterar a colisão.";
           }
         }
       }

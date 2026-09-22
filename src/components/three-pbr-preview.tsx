@@ -159,10 +159,16 @@ export function ThreePbrPreview({
       };
 
       const denseSurface = bodyMesh.visualHull;
+      const refinedSurface =
+        denseSurface?.photometricRefinement;
       const bodyVertices =
-        denseSurface?.vertices ?? bodyMesh.vertices;
+        refinedSurface?.surfaceVertices ??
+        denseSurface?.vertices ??
+        bodyMesh.vertices;
       const bodyNormals =
-        denseSurface?.normals ?? bodyMesh.normals;
+        refinedSurface?.surfaceNormals ??
+        denseSurface?.normals ??
+        bodyMesh.normals;
       const bodyIndices =
         denseSurface?.indices ?? bodyMesh.indices;
 

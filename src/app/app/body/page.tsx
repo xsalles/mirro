@@ -180,6 +180,7 @@ export default function BodyPage() {
 
   const calibration = current?.calibration;
   const visualHull = calibration?.mesh.visualHull;
+  const photometric = visualHull?.photometricRefinement;
   const activeIntrinsics =
     calibration?.cameraRig?.intrinsics ?? state.optics?.intrinsics;
   const activeDistortion =
@@ -408,7 +409,7 @@ export default function BodyPage() {
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
               {calibration.version === 7 && calibration.mesh.visualHull?.signedDistanceField
-                ? "8 vistas a cada 45°, visual hull apertado nas diagonais e SDF 3D ativo para colisão suave da roupa por gradiente."
+                ? `8 vistas a cada 45°, visual hull apertado nas diagonais e SDF 3D ativo para colisão por gradiente.${photometric?.refinedVertexCount ? ` Plane-sweep fotométrico refinou ${photometric.refinedVertexCount.toLocaleString("pt-BR")} vértices do torso.` : ""}`
                 : calibration.version === 6 && calibration.mesh.visualHull
                   ? "Reconstrução volumétrica ativa: voxel carving pelas quatro máscaras, marching tetrahedra, atlas multibanda e lente dedicada quando disponível."
                 : calibration.version === 5 && calibration.cameraRig?.distortion
@@ -420,7 +421,7 @@ export default function BodyPage() {
                   : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -442,6 +443,16 @@ export default function BodyPage() {
                 <dd className="mt-1 text-sm font-bold tabular-nums">
                   {visualHull
                     ? `${visualHull.occupiedVoxelCount.toLocaleString("pt-BR")} · ${visualHull.resolution.x}×${visualHull.resolution.y}×${visualHull.resolution.z}`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Photo-consistency</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {photometric
+                    ? photometric.refinedVertexCount > 0
+                      ? `${photometric.refinedVertexCount.toLocaleString("pt-BR")} vtx · -${photometric.meanInwardOffsetCm.toFixed(2)} cm`
+                      : "sem ajuste confiável"
                     : "—"}
                 </dd>
               </div>

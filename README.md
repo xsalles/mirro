@@ -8,7 +8,7 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - Classical connected-background body silhouette extraction
 - Confidence-weighted multi-view body calibration
 - Reusable 6–12 frame optical calibration with shared intrinsics + Brown–Conrady k1/k2/k3/p1/p2
-- BodyCalibration v7 with 8-view voxel carving, marching-tetrahedra visual hull, exact 3D signed-distance field and compressed occupancy
+- BodyCalibration v7 with 8-view voxel carving, marching-tetrahedra visual hull, exact 3D signed-distance field, compressed occupancy and conservative turntable photometric surface refinement
 - Garment front/back alpha calibration from the user's real photos
 - Semantic GarmentMesh: torso + sleeves for tops; waistband + split legs/crotch for bottoms
 - XPBD structural / shear / bend / seam constraints

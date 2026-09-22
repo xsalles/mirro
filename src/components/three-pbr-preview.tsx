@@ -77,8 +77,9 @@ export function ThreePbrPreview({
   const [backendLabel, setBackendLabel] = useState("WebGPU / WebGL2");
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
+    const currentHost = hostRef.current;
+    if (!currentHost) return;
+    const host: HTMLDivElement = currentHost;
 
     let disposed = false;
 
@@ -309,7 +310,12 @@ export function ThreePbrPreview({
       runtime.backGeometry,
     ]) {
       const position = geometry.getAttribute("position");
-      if (position.count !== garmentMesh.positions.length / 3) continue;
+      if (
+        position.count !== garmentMesh.positions.length / 3 ||
+        !("array" in position)
+      ) {
+        continue;
+      }
       const array = position.array as Float32Array;
       array.set(garmentMesh.positions);
       position.needsUpdate = true;

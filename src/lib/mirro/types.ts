@@ -178,8 +178,10 @@ export type BodySignedDistanceField = {
 };
 
 export type BodyDepthMap = {
-  version: 1;
-  method: "turntable-zncc-plane-sweep-v1";
+  version: 1 | 2;
+  method:
+    | "turntable-zncc-plane-sweep-v1"
+    | "turntable-robust-coarse-to-fine-v2";
   view: BodyViewId;
   width: number;
   height: number;
@@ -188,6 +190,8 @@ export type BodyDepthMap = {
   confidence: Uint8Array;
   validCount: number;
   meanConfidence: number;
+  subpixelRefinedCount?: number;
+  meanSubpixelOffsetCm?: number;
 };
 
 export type BodyTsdfVolume = {
@@ -207,12 +211,38 @@ export type BodyTsdfVolume = {
 };
 
 export type BodyMultiViewStereo = {
-  version: 1;
-  method: "turntable-zncc-tsdf-v1";
+  version: 1 | 2;
+  method:
+    | "turntable-zncc-tsdf-v1"
+    | "turntable-robust-subpixel-tsdf-v2";
   projectionModel:
     | "metric-orthographic"
     | "calibrated-turntable-perspective";
   meanCameraDistanceCm?: number;
+  matchingModel?:
+    | "zncc"
+    | "zncc-census-gradient";
+  depthRefinement?:
+    | "discrete"
+    | "coarse-to-fine-parabolic";
+  matchingKernel?:
+    | "js-popcnt"
+    | "wasm-popcnt32-v1";
+  executionBackend?:
+    | "main-js"
+    | "main-wasm"
+    | "worker-js"
+    | "worker-wasm";
+  subpixelRefinedCount?: number;
+  turntableRig?: {
+    version: 1;
+    method: "shared-axis-center-least-squares-v1";
+    optimized: boolean;
+    axisCenterCm: [number, number, number];
+    sharedCameraDistanceCm?: number;
+    verticalOpticalOffsetCm?: number;
+    centerResidualCm: number;
+  };
   depthMaps: Record<BodyViewId, BodyDepthMap>;
   tsdf: BodyTsdfVolume;
   surfaceVertices: number[];
@@ -345,7 +375,7 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
@@ -354,7 +384,8 @@ export type BodyCalibration = {
     | "lens-undistorted-local-color-surface-v5"
     | "visual-hull-multiband-v6"
     | "eight-view-sdf-gradient-seams-v7"
-    | "turntable-zncc-tsdf-mvs-v8";
+    | "turntable-zncc-tsdf-mvs-v8"
+    | "robust-subpixel-worker-mvs-v9";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   denseSilhouettes?: Partial<Record<BodyViewId, BodySilhouette>>;

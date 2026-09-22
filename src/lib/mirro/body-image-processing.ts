@@ -423,6 +423,7 @@ export async function calibrateBodyFromPhotos(
                   BodySilhouette
                 >,
                 bodyHeightCm: measurements.heightCm,
+                optics,
               });
 
             if (multiViewStereo) {

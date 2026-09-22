@@ -193,11 +193,44 @@ V9 keeps the v8 conservative geometry contract but changes how depth is selected
 
 The WASM claim is intentionally narrow: only the Census popcount hot path is currently native WebAssembly. ZNCC, gradient matching, depth regularization, cross-view filtering and TSDF remain TypeScript executed inside the Worker. A future full WASM/SIMD port should be benchmark-driven rather than implied today.
 
+## Turntable bundle + pyramid + SIMD v10
+
+V10 extends the v9 solver without changing the conservative collision contract.
+
+### Turntable bundle
+
+The reusable optical profile still provides shared pinhole intrinsics. V10 then estimates a turntable model from the eight body silhouettes instead of assuming every pose landed exactly on its nominal 45° stop:
+
+1. the v9 shared-center solution provides the initialization;
+2. seven centerline samples per view are converted from image coordinates into metric camera observations;
+3. a bounded robust bundle adjusts X/Z axis origin, X/Z axis tilt, shared optical offsets and seven per-frame angular residuals while keeping the front frame anchored;
+4. Huber loss limits the influence of outlier rows, and angle/tilt regularization prevents noisy silhouettes from being explained by implausible pose changes;
+5. the resulting Rodrigues axis/angle transform is used by SDF ray intersection, patch reprojection, cross-view consistency and TSDF projection—not merely persisted as metadata.
+
+This remains a turntable-specific bundle, not a generic structure-from-motion solve. It estimates the motion model supported by the capture protocol and deliberately bounds degrees of freedom that the eight silhouettes cannot stably identify.
+
+### Multi-resolution depth
+
+Each decoded scan view builds a three-level luminance/gradient pyramid when resolution allows: 1×, ½ and ¼. Coarse hypotheses are compared at the ¼ level, the local winner is refined at ½, and the final center/parabolic subpixel samples use full resolution. Geometry is always projected in the original camera model; only photometric sampling moves between pyramid levels.
+
+The dedicated Worker requests a 42-column working depth map while the synchronous fallback keeps 30 columns. This makes the high-density path available without making a Worker failure freeze the UI for the same workload.
+
+### WebAssembly SIMD
+
+The build now compiles `assembly/mvs-simd.ts` with AssemblyScript and `--enable simd` into `public/mvs-simd.wasm` before development, tests and production builds. The Worker validates/instantiates this module once and uses its `v128` exports for:
+
+- four-lane dot products and squared sums used by ZNCC moments;
+- four-lane weighted sums used by TSDF depth fusion.
+
+Census Hamming still uses the separate tiny `i32.popcnt` WASM kernel. If SIMD or WebAssembly is unavailable, the exact same reductions fall back to scalar JavaScript.
+
+The SIMD claim is intentionally scoped: camera projection, patch traversal, Census construction, cross-view logic, voxel traversal and marching tetrahedra are still TypeScript running inside the Worker. V10 moves verified numeric hot reductions to SIMD; it does not pretend the whole solver is native WASM.
+
 ## Engine roadmap
 
-- Refine the turntable model beyond the v9 shared center into a full robust bundle over angle error, axis tilt and per-frame pose residuals.
-- Port the remaining robust patch cost + TSDF hot loops to WASM SIMD after collecting mobile timing data; v9 currently uses Worker orchestration plus a WASM Census popcount microkernel.
-- Add an image-pyramid cost volume and edge-aware depth upsampling if higher source resolution materially improves verified surface error.
+- Extend the v10 turntable bundle with image-feature residuals, axis-origin Y/tilt validation and robust frame rejection rather than relying mainly on silhouette centerlines.
+- Move the remaining patch traversal and TSDF voxel traversal to memory-resident WASM SIMD only after browser/mobile benchmarks prove transfer and boundary-call costs are lower than the current Worker TypeScript path.
+- Add edge-aware depth propagation/upsampling from the current sparse working grid and quantify surface error against synthetic ground truth before increasing density further.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
 - Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.

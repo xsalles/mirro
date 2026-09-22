@@ -9,6 +9,17 @@ import {
   censusHamming32,
   getCensusPopcountKernel,
 } from "./mvs-wasm-kernel";
+import {
+  dotProduct,
+  getMvsNumericBackend,
+  sumSquares,
+  weightedMean,
+} from "./mvs-simd-kernel";
+import {
+  rotateAroundAxis,
+  solveTurntableBundle,
+  type TurntableBundleView,
+} from "./turntable-bundle";
 import type {
   BodyDepthMap,
   BodyMultiViewStereo,
@@ -29,13 +40,29 @@ type TurntableCamera = {
   verticalOffsetCm: number;
 };
 
+type TurntablePose = {
+  angleRad: number;
+  axisOriginCm: [number, number, number];
+  axisDirection: [number, number, number];
+};
+
+type FeatureLevel = {
+  scale: number;
+  width: number;
+  height: number;
+  luminance: Float32Array;
+  gradient: Float32Array;
+};
+
 type MvsView = {
   image: RgbaImage;
   mask: Uint8Array;
   silhouette: BodySilhouette;
   luminance: Float32Array;
   gradient: Float32Array;
+  pyramid: FeatureLevel[];
   camera?: TurntableCamera;
+  pose?: TurntablePose;
 };
 
 const INVALID_DEPTH = -32768;
@@ -93,6 +120,92 @@ function buildGradientMagnitude(
   }
 
   return output;
+}
+
+function downsampleFloat(
+  input: Float32Array,
+  width: number,
+  height: number,
+) {
+  const nextWidth = Math.max(1, Math.floor(width / 2));
+  const nextHeight = Math.max(1, Math.floor(height / 2));
+  const output = new Float32Array(
+    nextWidth * nextHeight,
+  );
+
+  for (let y = 0; y < nextHeight; y += 1) {
+    for (let x = 0; x < nextWidth; x += 1) {
+      const sx = x * 2;
+      const sy = y * 2;
+      let sum = 0;
+      let count = 0;
+
+      for (let dy = 0; dy < 2; dy += 1) {
+        for (let dx = 0; dx < 2; dx += 1) {
+          const px = sx + dx;
+          const py = sy + dy;
+          if (px >= width || py >= height) continue;
+          sum += input[py * width + px];
+          count += 1;
+        }
+      }
+
+      output[y * nextWidth + x] =
+        count > 0 ? sum / count : 0;
+    }
+  }
+
+  return {
+    values: output,
+    width: nextWidth,
+    height: nextHeight,
+  };
+}
+
+function buildFeaturePyramid(
+  luminance: Float32Array,
+  width: number,
+  height: number,
+): FeatureLevel[] {
+  const levels: FeatureLevel[] = [];
+  let current = luminance;
+  let currentWidth = width;
+  let currentHeight = height;
+  let scale = 1;
+
+  for (let level = 0; level < 3; level += 1) {
+    levels.push({
+      scale,
+      width: currentWidth,
+      height: currentHeight,
+      luminance: current,
+      gradient: buildGradientMagnitude(
+        current,
+        currentWidth,
+        currentHeight,
+      ),
+    });
+
+    if (
+      level === 2 ||
+      currentWidth < 48 ||
+      currentHeight < 48
+    ) {
+      break;
+    }
+
+    const next = downsampleFloat(
+      current,
+      currentWidth,
+      currentHeight,
+    );
+    current = next.values;
+    currentWidth = next.width;
+    currentHeight = next.height;
+    scale *= 0.5;
+  }
+
+  return levels;
 }
 
 function median(values: number[]) {

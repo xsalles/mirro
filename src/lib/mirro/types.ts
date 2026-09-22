@@ -27,6 +27,10 @@ export type BodyMeasurements = {
   upperArmCm?: number;
   thighCm?: number;
   inseamCm?: number;
+  forearmCm?: number;
+  calfCm?: number;
+  neckCm?: number;
+  shoulderSlopeDeg?: number;
 };
 
 export type CameraIntrinsics = {
@@ -178,10 +182,11 @@ export type BodySignedDistanceField = {
 };
 
 export type BodyDepthMap = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   method:
     | "turntable-zncc-plane-sweep-v1"
-    | "turntable-robust-coarse-to-fine-v2";
+    | "turntable-robust-coarse-to-fine-v2"
+    | "turntable-edge-aware-dense-v3";
   view: BodyViewId;
   width: number;
   height: number;
@@ -192,6 +197,8 @@ export type BodyDepthMap = {
   meanConfidence: number;
   subpixelRefinedCount?: number;
   meanSubpixelOffsetCm?: number;
+  propagatedCount?: number;
+  sourceWidth?: number;
 };
 
 export type BodyTsdfVolume = {
@@ -211,11 +218,12 @@ export type BodyTsdfVolume = {
 };
 
 export type BodyMultiViewStereo = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   method:
     | "turntable-zncc-tsdf-v1"
     | "turntable-robust-subpixel-tsdf-v2"
-    | "turntable-bundle-pyramid-simd-v3";
+    | "turntable-bundle-pyramid-simd-v3"
+    | "turntable-feature-bundle-dense-simd-v4";
   projectionModel:
     | "metric-orthographic"
     | "calibrated-turntable-perspective";
@@ -225,7 +233,8 @@ export type BodyMultiViewStereo = {
     | "zncc-census-gradient";
   depthRefinement?:
     | "discrete"
-    | "coarse-to-fine-parabolic";
+    | "coarse-to-fine-parabolic"
+    | "coarse-to-fine-parabolic-edge-aware";
   matchingKernel?:
     | "js-popcnt"
     | "wasm-popcnt32-v1";
@@ -241,10 +250,11 @@ export type BodyMultiViewStereo = {
     | "worker-wasm-simd";
   subpixelRefinedCount?: number;
   turntableRig?: {
-    version: 1 | 2;
+    version: 1 | 2 | 3;
     method:
       | "shared-axis-center-least-squares-v1"
-      | "robust-axis-angle-tilt-bundle-v2";
+      | "robust-axis-angle-tilt-bundle-v2"
+      | "feature-residual-frame-rejection-bundle-v3";
     optimized: boolean;
     axisCenterCm: [number, number, number];
     sharedCameraDistanceCm?: number;
@@ -257,6 +267,11 @@ export type BodyMultiViewStereo = {
     >;
     bundleResidualCm?: number;
     bundleIterations?: number;
+    featureResidualCm?: number;
+    rejectedViews?: BodyViewId[];
+    acceptedViews?: BodyViewId[];
+    axisVerticalValidated?: boolean;
+    axisVerticalResidualSlopeCmPerCm?: number;
   };
   pyramidLevels?: number;
   highDensityDepthWidth?: number;
@@ -392,7 +407,7 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
@@ -403,7 +418,8 @@ export type BodyCalibration = {
     | "eight-view-sdf-gradient-seams-v7"
     | "turntable-zncc-tsdf-mvs-v8"
     | "robust-subpixel-worker-mvs-v9"
-    | "bundle-pyramid-simd-mvs-v10";
+    | "bundle-pyramid-simd-mvs-v10"
+    | "feature-bundle-dense-wasm-mvs-v11";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   denseSilhouettes?: Partial<Record<BodyViewId, BodySilhouette>>;
@@ -426,7 +442,15 @@ export type BodyProfile = BodyMeasurements & {
   updatedAt: string;
 };
 
-export type GarmentCategory = "top" | "shirt" | "hoodie" | "pants" | "shorts";
+export type GarmentCategory =
+  | "top"
+  | "shirt"
+  | "hoodie"
+  | "jacket"
+  | "dress"
+  | "skirt"
+  | "pants"
+  | "shorts";
 export type FabricWeight = "light" | "medium" | "heavy";
 export type StretchLevel = "none" | "low" | "medium" | "high";
 
@@ -470,13 +494,21 @@ export type GarmentCalibration = {
   createdAt: string;
 };
 
+export type FabricEvidence = {
+  source: "engineering-preset" | "lab-sheet";
+  reference?: string;
+  testedAt?: string;
+  notes?: string;
+};
+
 export type FabricLibraryEntry = {
   id: string;
   name: string;
   family: string;
   composition: string;
-  source: "engineering-preset";
+  source: "engineering-preset" | "lab-sheet";
   profile: FabricPhysicalProfile;
+  evidence?: FabricEvidence;
   notes: string;
 };
 
@@ -494,6 +526,7 @@ export type Garment = {
   calibration?: GarmentCalibration;
   physicalProfile?: FabricPhysicalProfile;
   fabricLibraryId?: string;
+  fabricEvidence?: FabricEvidence;
   createdAt: string;
 };
 
@@ -528,6 +561,10 @@ export type ClothMaterial = {
 export type GarmentRegionKind =
   | "torso-front"
   | "torso-back"
+  | "skirt-front"
+  | "skirt-back"
+  | "dress-skirt-front"
+  | "dress-skirt-back"
   | "left-sleeve-front"
   | "left-sleeve-back"
   | "right-sleeve-front"
@@ -549,7 +586,7 @@ export type GarmentMeshRegion = {
 };
 
 export type GarmentMesh = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   coordinateSystem: "x-right-y-up-z-front-centimeters";
   category: GarmentCategory;
   rows: number;

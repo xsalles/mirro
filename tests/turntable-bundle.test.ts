@@ -84,4 +84,48 @@ describe("turntable bundle v10", () => {
       ),
     ).toBeLessThan((1.1 * Math.PI) / 180);
   });
+  it("uses feature residuals, validates the vertical axis and rejects one bad frame", () => {
+    const outlier = "backRight" as const;
+    const views: TurntableBundleView[] =
+      BODY_VIEW_SEQUENCE.map((view) => ({
+        view,
+        nominalAngleRad: BODY_VIEW_ANGLE_RAD[view],
+        frameConfidence: 0.95,
+        samples: [-24, -12, 0, 12, 24].map(
+          (bodyYcm) => {
+            const horizontalBias =
+              view === outlier ? 7.5 : 0;
+            const featureBias =
+              view === outlier ? 8.2 : 0;
+            return {
+              bodyYcm,
+              observedHorizontalCm: horizontalBias,
+              observedVerticalCm: bodyYcm - 0.8,
+              featureHorizontalCm: featureBias,
+              featureConfidence: 0.9,
+            };
+          },
+        ),
+      }));
+
+    const solved = solveTurntableBundle({
+      views,
+      initialAxisCenterCm: [0, 0],
+      maxIterations: 7,
+    });
+
+    expect(solved.acceptedViews).toHaveLength(7);
+    expect(solved.rejectedViews).toContain(outlier);
+    expect(solved.featureResidualCm).toBeGreaterThan(0);
+    expect(
+      solved.axisVerticalValidation.valid,
+    ).toBe(true);
+    expect(
+      Math.abs(
+        solved.axisVerticalValidation
+          .residualSlopeCmPerCm,
+      ),
+    ).toBeLessThan(0.01);
+  });
+
 });

@@ -42,6 +42,10 @@ export default function BodyPage() {
     upperArmCm: current?.upperArmCm ? String(current.upperArmCm) : "",
     thighCm: current?.thighCm ? String(current.thighCm) : "",
     inseamCm: current?.inseamCm ? String(current.inseamCm) : "",
+    forearmCm: current?.forearmCm ? String(current.forearmCm) : "",
+    calfCm: current?.calfCm ? String(current.calfCm) : "",
+    neckCm: current?.neckCm ? String(current.neckCm) : "",
+    shoulderSlopeDeg: current?.shoulderSlopeDeg !== undefined ? String(current.shoulderSlopeDeg) : "",
   });
   const [files, setFiles] = useState<Partial<Record<BodyViewId, File>>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -80,6 +84,18 @@ export default function BodyPage() {
       inseamCm: measurements.inseamCm
         ? Number(measurements.inseamCm)
         : undefined,
+      forearmCm: measurements.forearmCm
+        ? Number(measurements.forearmCm)
+        : undefined,
+      calfCm: measurements.calfCm
+        ? Number(measurements.calfCm)
+        : undefined,
+      neckCm: measurements.neckCm
+        ? Number(measurements.neckCm)
+        : undefined,
+      shoulderSlopeDeg: measurements.shoulderSlopeDeg
+        ? Number(measurements.shoulderSlopeDeg)
+        : undefined,
     };
 
     if (!validMeasurement(parsed.heightCm, 120, 230)) nextErrors.heightCm = "Informe uma altura entre 120 e 230 cm.";
@@ -100,6 +116,18 @@ export default function BodyPage() {
     }
     if (parsed.inseamCm !== undefined && !validMeasurement(parsed.inseamCm, 45, 110)) {
       nextErrors.inseamCm = "Informe a entreperna entre 45 e 110 cm.";
+    }
+    if (parsed.forearmCm !== undefined && !validMeasurement(parsed.forearmCm, 15, 55)) {
+      nextErrors.forearmCm = "Informe a circunferência do antebraço entre 15 e 55 cm.";
+    }
+    if (parsed.calfCm !== undefined && !validMeasurement(parsed.calfCm, 20, 70)) {
+      nextErrors.calfCm = "Informe a circunferência da panturrilha entre 20 e 70 cm.";
+    }
+    if (parsed.neckCm !== undefined && !validMeasurement(parsed.neckCm, 25, 65)) {
+      nextErrors.neckCm = "Informe a circunferência do pescoço entre 25 e 65 cm.";
+    }
+    if (parsed.shoulderSlopeDeg !== undefined && !validMeasurement(parsed.shoulderSlopeDeg, 0, 25)) {
+      nextErrors.shoulderSlopeDeg = "Informe uma inclinação entre 0° e 25°.";
     }
 
     for (const view of CAPTURE_VIEWS) {
@@ -319,7 +347,7 @@ export default function BodyPage() {
             <div>
               <h2 className="text-lg font-bold">Medidas anatômicas avançadas</h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-                Opcionais, mas recomendadas. Elas substituem proporções médias na posição dos ombros, comprimento e espessura dos braços, coxas e pernas.
+                Opcionais, mas recomendadas. Elas substituem proporções médias na posição dos ombros, comprimento e espessura dos braços, antebraços, pescoço, coxas, panturrilhas e pernas.
               </p>
             </div>
             <span className="rounded-full bg-[var(--thread-soft)] px-3 py-1 text-xs font-semibold text-[var(--thread)]">
@@ -327,13 +355,17 @@ export default function BodyPage() {
             </span>
           </div>
 
-          <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {[
               ["shoulderWidthCm", "Ombro a ombro", "cm"],
               ["armLengthCm", "Comprimento do braço", "cm"],
               ["upperArmCm", "Circ. braço", "cm"],
               ["thighCm", "Circ. coxa", "cm"],
               ["inseamCm", "Entreperna", "cm"],
+              ["forearmCm", "Circ. antebraço", "cm"],
+              ["calfCm", "Circ. panturrilha", "cm"],
+              ["neckCm", "Circ. pescoço", "cm"],
+              ["shoulderSlopeDeg", "Inclinação do ombro", "°"],
             ].map(([key, label, unit]) => (
               <div key={key}>
                 <label htmlFor={key} className="text-sm font-semibold">{label}</label>

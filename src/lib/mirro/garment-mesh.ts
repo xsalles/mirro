@@ -4,6 +4,7 @@ import type {
   BodyMesh,
   ClothConstraint,
   ClothConstraintKind,
+  ClothConstraintAxis,
   ClothMaterial,
   FabricWeight,
   Garment,
@@ -29,6 +30,7 @@ type MeshContext = {
   indices: number[];
   constraints: ClothConstraint[];
   regions: GarmentMeshRegion[];
+  particleInverseMass: number;
 };
 
 type RegionHandle = {
@@ -76,9 +78,11 @@ function addConstraint(
   a: number,
   b: number,
   restScale = 1,
+  axis: ClothConstraintAxis = "none",
 ) {
   constraints.push({
     kind,
+    axis,
     a,
     b,
     restLength: distance(positions, a, b) * restScale,
@@ -93,34 +97,66 @@ function materialCompliance(stretch: StretchLevel) {
   return 0.000035;
 }
 
-function bendingCompliance(weight: FabricWeight) {
-  if (weight === "light") return 0.00035;
-  if (weight === "heavy") return 0.000035;
-  return 0.00012;
+export function defaultFabricPhysicalProfile(
+  weight: FabricWeight,
+  stretch: StretchLevel,
+) {
+  const baseStretch =
+    stretch === "none" ? 2 : stretch === "low" ? 7 : stretch === "medium" ? 15 : 28;
+
+  return {
+    densityGsm: weight === "light" ? 120 : weight === "heavy" ? 320 : 190,
+    thicknessMm: weight === "light" ? 0.45 : weight === "heavy" ? 1.5 : 0.85,
+    stretchWarpPct: baseStretch,
+    stretchWeftPct: Math.min(45, baseStretch * 1.28),
+    bendStiffness: weight === "light" ? 28 : weight === "heavy" ? 82 : 55,
+    friction: weight === "light" ? 0.12 : weight === "heavy" ? 0.26 : 0.18,
+  };
+}
+
+function stretchPctToCompliance(percent: number) {
+  const normalized = clamp(percent, 0, 45) / 45;
+  return 0.00000035 + normalized * normalized * 0.000045;
+}
+
+function stiffnessToBendCompliance(stiffness: number) {
+  const flexibility = 1 - clamp(stiffness, 0, 100) / 100;
+  return 0.000015 + flexibility * flexibility * 0.00042;
 }
 
 export function clothMaterialForGarment(garment: Garment): ClothMaterial {
-  const thickness =
-    garment.fabricWeight === "light"
-      ? 0.28
-      : garment.fabricWeight === "heavy"
-        ? 0.72
-        : 0.46;
+  const fallback = defaultFabricPhysicalProfile(
+    garment.fabricWeight,
+    garment.stretch,
+  );
+  const profile = garment.physicalProfile ?? fallback;
+  const legacyCompliance = materialCompliance(garment.stretch);
+  const warpCompliance = garment.physicalProfile
+    ? stretchPctToCompliance(profile.stretchWarpPct)
+    : legacyCompliance;
+  const weftCompliance = garment.physicalProfile
+    ? stretchPctToCompliance(profile.stretchWeftPct)
+    : legacyCompliance;
 
   return {
-    stretchCompliance: materialCompliance(garment.stretch),
-    shearCompliance: materialCompliance(garment.stretch) * 1.4,
-    bendCompliance: bendingCompliance(garment.fabricWeight),
+    stretchCompliance: (warpCompliance + weftCompliance) / 2,
+    stretchWarpCompliance: warpCompliance,
+    stretchWeftCompliance: weftCompliance,
+    shearCompliance: Math.max(warpCompliance, weftCompliance) * 1.35,
+    bendCompliance: garment.physicalProfile
+      ? stiffnessToBendCompliance(profile.bendStiffness)
+      : garment.fabricWeight === "light"
+        ? 0.00035
+        : garment.fabricWeight === "heavy"
+          ? 0.000035
+          : 0.00012,
+    densityGsm: profile.densityGsm,
+    particleInverseMass: clamp(180 / Math.max(60, profile.densityGsm), 0.35, 2.2),
     seamCompliance: 0.00000008,
-    damping:
-      garment.fabricWeight === "heavy"
-        ? 0.988
-        : garment.fabricWeight === "light"
-          ? 0.994
-          : 0.991,
+    damping: clamp(0.996 - profile.densityGsm / 100000, 0.988, 0.995),
     gravityCmPerSec2: 981,
-    thicknessCm: thickness,
-    friction: garment.fabricWeight === "heavy" ? 0.16 : 0.1,
+    thicknessCm: clamp(profile.thicknessMm / 10, 0.025, 0.3),
+    friction: clamp(profile.friction, 0.02, 0.65),
   };
 }
 
@@ -179,7 +215,7 @@ function pushRegion(params: {
       const tex = texcoord(v, u);
       context.positions.push(...p);
       context.previousPositions.push(...p);
-      context.inverseMass.push(1);
+      context.inverseMass.push(context.particleInverseMass);
       context.uv.push(tex[0], tex[1]);
       context.textureSide.push(side);
       context.regionIds.push(id);
@@ -197,6 +233,8 @@ function pushRegion(params: {
           "structural",
           here,
           vertex(row, col + 1),
+          1,
+          "weft",
         );
       }
       if (row + 1 < rows) {
@@ -206,6 +244,8 @@ function pushRegion(params: {
           "structural",
           here,
           vertex(row + 1, col),
+          1,
+          "warp",
         );
       }
       if (row + 1 < rows && col + 1 < cols) {
@@ -215,6 +255,8 @@ function pushRegion(params: {
           "shear",
           here,
           vertex(row + 1, col + 1),
+          1,
+          "bias",
         );
       }
       if (row + 1 < rows && col > 0) {
@@ -224,6 +266,8 @@ function pushRegion(params: {
           "shear",
           here,
           vertex(row + 1, col - 1),
+          1,
+          "bias",
         );
       }
       if (col + 2 < cols) {
@@ -233,6 +277,8 @@ function pushRegion(params: {
           "bend",
           here,
           vertex(row, col + 2),
+          1,
+          "weft",
         );
       }
       if (row + 2 < rows) {
@@ -242,6 +288,8 @@ function pushRegion(params: {
           "bend",
           here,
           vertex(row + 2, col),
+          1,
+          "warp",
         );
       }
 
@@ -887,6 +935,7 @@ export function buildGarmentMesh(params: {
     indices: [],
     constraints: [],
     regions: [],
+    particleInverseMass: material.particleInverseMass ?? 1,
   };
 
   const grid =

@@ -1207,18 +1207,20 @@ function robustPatchScore(params: {
   meanA /= refValues.length;
   meanB /= targetValues.length;
 
-  const centeredA = refValues.map(
-    (value) => value - meanA,
+  const sampleCount = refValues.length;
+  const covariance =
+    dotProduct(refValues, targetValues) -
+    sampleCount * meanA * meanB;
+  const varianceA = Math.max(
+    0,
+    sumSquares(refValues) -
+      sampleCount * meanA * meanA,
   );
-  const centeredB = targetValues.map(
-    (value) => value - meanB,
+  const varianceB = Math.max(
+    0,
+    sumSquares(targetValues) -
+      sampleCount * meanB * meanB,
   );
-  const covariance = dotProduct(
-    centeredA,
-    centeredB,
-  );
-  const varianceA = sumSquares(centeredA);
-  const varianceB = sumSquares(centeredB);
 
   const denominator = Math.sqrt(
     varianceA * varianceB,
@@ -1990,6 +1992,9 @@ function buildTsdf(params: {
   const maxQuantized = Math.floor(
     truncationCm / quantizationCm,
   );
+  const contributions = new Array<number>(8).fill(0);
+  const contributionWeights =
+    new Array<number>(8).fill(0);
 
   for (let gy = 0; gy < resolution.y; gy += 1) {
     const y = originCm[1] + gy * stepCm[1];
@@ -2028,8 +2033,7 @@ function buildTsdf(params: {
           continue;
         }
 
-        const contributions: number[] = [];
-        const contributionWeights: number[] = [];
+        let contributionCount = 0;
 
         const radialAngle = Math.atan2(x, z);
         for (const viewId of BODY_VIEW_SEQUENCE) {
@@ -2073,13 +2077,17 @@ function buildTsdf(params: {
           const weight =
             sample.confidence *
             sample.confidence;
-          contributions.push(contribution);
-          contributionWeights.push(weight);
+          contributions[contributionCount] =
+            contribution;
+          contributionWeights[contributionCount] =
+            weight;
+          contributionCount += 1;
         }
 
         const reduced = weightedMean(
           contributions,
           contributionWeights,
+          contributionCount,
         );
         const weightSum = reduced.weightSum;
         const fused =

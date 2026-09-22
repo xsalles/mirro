@@ -276,11 +276,11 @@ describe("classical multi-view stereo + TSDF", () => {
       diagnostics,
     });
 
-    expect(
-      mvs,
-      `MVS diagnostics: ${JSON.stringify(diagnostics)}`,
-    ).not.toBeNull();
-    if (!mvs) return;
+    if (!mvs) {
+      throw new Error(
+        `MVS diagnostics: ${JSON.stringify(diagnostics)}`,
+      );
+    }
 
     expect(mvs.projectionModel).toBe("metric-orthographic");
     expect(mvs.validDepthCount).toBeGreaterThan(500);

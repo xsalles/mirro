@@ -5,6 +5,10 @@ import {
 } from "./body-views";
 import { sampleSignedDistance } from "./signed-distance-field";
 import { scaleOpticalIntrinsics } from "./optical-calibration";
+import {
+  censusHamming32,
+  getCensusPopcountKernel,
+} from "./mvs-wasm-kernel";
 import type {
   BodyDepthMap,
   BodyMultiViewStereo,
@@ -30,6 +34,7 @@ type MvsView = {
   mask: Uint8Array;
   silhouette: BodySilhouette;
   luminance: Float32Array;
+  gradient: Float32Array;
   camera?: TurntableCamera;
 };
 
@@ -64,6 +69,39 @@ function buildLuminance(image: RgbaImage) {
       image.data[offset + 2] * 0.0722;
   }
   return output;
+}
+
+function buildGradientMagnitude(
+  luminance: Float32Array,
+  width: number,
+  height: number,
+) {
+  const output = new Float32Array(width * height);
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const gx =
+        (luminance[y * width + x + 1] -
+          luminance[y * width + x - 1]) *
+        0.5;
+      const gy =
+        (luminance[(y + 1) * width + x] -
+          luminance[(y - 1) * width + x]) *
+        0.5;
+      output[y * width + x] = Math.hypot(gx, gy);
+    }
+  }
+
+  return output;
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const ordered = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2
+    ? ordered[middle]
+    : (ordered[middle - 1] + ordered[middle]) / 2;
 }
 
 function calibratedCameraForView(params: {
@@ -134,6 +172,112 @@ function calibratedCameraForView(params: {
       ((bodyCenterY - intrinsics.cy) *
         referenceCameraDepth) /
       Math.max(1e-6, intrinsics.fy),
+  };
+}
+
+type OptimizedTurntableRig = {
+  cameras: Record<BodyViewId, TurntableCamera>;
+  metadata: NonNullable<
+    BodyMultiViewStereo["turntableRig"]
+  >;
+};
+
+function optimizeTurntableCameras(
+  candidates: Record<
+    BodyViewId,
+    TurntableCamera | undefined
+  >,
+): OptimizedTurntableRig | undefined {
+  if (
+    !BODY_VIEW_SEQUENCE.every((view) =>
+      Boolean(candidates[view]),
+    )
+  ) {
+    return undefined;
+  }
+
+  const resolved = candidates as Record<
+    BodyViewId,
+    TurntableCamera
+  >;
+  const sharedDistanceCm = median(
+    BODY_VIEW_SEQUENCE.map(
+      (view) => resolved[view].distanceCm,
+    ),
+  );
+  const verticalOpticalOffsetCm = median(
+    BODY_VIEW_SEQUENCE.map(
+      (view) => resolved[view].verticalOffsetCm,
+    ),
+  );
+
+  let suu = 0;
+  let suv = 0;
+  let svv = 0;
+  let suh = 0;
+  let svh = 0;
+
+  for (const view of BODY_VIEW_SEQUENCE) {
+    const angle = BODY_VIEW_ANGLE_RAD[view];
+    const u = Math.cos(angle);
+    const v = -Math.sin(angle);
+    const h = resolved[view].horizontalOffsetCm;
+    suu += u * u;
+    suv += u * v;
+    svv += v * v;
+    suh += u * h;
+    svh += v * h;
+  }
+
+  const determinant = suu * svv - suv * suv;
+  let axisX = 0;
+  let axisZ = 0;
+
+  if (Math.abs(determinant) > 1e-7) {
+    axisX = (suh * svv - svh * suv) / determinant;
+    axisZ = (svh * suu - suh * suv) / determinant;
+  }
+
+  axisX = clamp(axisX, -8, 8);
+  axisZ = clamp(axisZ, -8, 8);
+
+  let squaredResidual = 0;
+  const cameras = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const angle = BODY_VIEW_ANGLE_RAD[view];
+      const predictedHorizontal =
+        axisX * Math.cos(angle) -
+        axisZ * Math.sin(angle);
+      const residual =
+        resolved[view].horizontalOffsetCm -
+        predictedHorizontal;
+      squaredResidual += residual * residual;
+
+      return [
+        view,
+        {
+          ...resolved[view],
+          distanceCm: sharedDistanceCm,
+          horizontalOffsetCm: predictedHorizontal,
+          verticalOffsetCm: verticalOpticalOffsetCm,
+        },
+      ];
+    }),
+  ) as Record<BodyViewId, TurntableCamera>;
+
+  return {
+    cameras,
+    metadata: {
+      version: 1,
+      method: "shared-axis-center-least-squares-v1",
+      optimized: true,
+      axisCenterCm: [axisX, 0, axisZ],
+      sharedCameraDistanceCm: sharedDistanceCm,
+      verticalOpticalOffsetCm,
+      centerResidualCm: Math.sqrt(
+        squaredResidual / BODY_VIEW_SEQUENCE.length,
+      ),
+    },
   };
 }
 

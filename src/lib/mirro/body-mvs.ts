@@ -1564,6 +1564,7 @@ export function buildClassicalMultiViewStereo(params: {
   masks: Record<BodyViewId, Uint8Array>;
   silhouettes: Record<BodyViewId, BodySilhouette>;
   bodyHeightCm: number;
+  optics?: OpticalCalibrationProfile;
 }): BodyMultiViewStereo | null {
   if (
     params.hull.viewCount !== 8 ||
@@ -1571,6 +1572,24 @@ export function buildClassicalMultiViewStereo(params: {
   ) {
     return null;
   }
+
+  const cameraCandidates = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => [
+      view,
+      calibratedCameraForView({
+        image: params.images[view],
+        silhouette: params.silhouettes[view],
+        bodyHeightCm: params.bodyHeightCm,
+        optics: params.optics,
+      }),
+    ]),
+  ) as Record<
+    BodyViewId,
+    TurntableCamera | undefined
+  >;
+  const usePerspective = BODY_VIEW_SEQUENCE.every(
+    (view) => Boolean(cameraCandidates[view]),
+  );
 
   const views = Object.fromEntries(
     BODY_VIEW_SEQUENCE.map((view) => [
@@ -1582,6 +1601,9 @@ export function buildClassicalMultiViewStereo(params: {
         luminance: buildLuminance(
           params.images[view],
         ),
+        camera: usePerspective
+          ? cameraCandidates[view]
+          : undefined,
       },
     ]),
   ) as Record<BodyViewId, MvsView>;
@@ -1651,7 +1673,18 @@ export function buildClassicalMultiViewStereo(params: {
 
   return {
     version: 1,
-    method: "orthographic-turntable-zncc-tsdf-v1",
+    method: "turntable-zncc-tsdf-v1",
+    projectionModel: usePerspective
+      ? "calibrated-turntable-perspective"
+      : "metric-orthographic",
+    meanCameraDistanceCm: usePerspective
+      ? BODY_VIEW_SEQUENCE.reduce(
+          (sum, view) =>
+            sum +
+            (cameraCandidates[view]?.distanceCm ?? 0),
+          0,
+        ) / BODY_VIEW_SEQUENCE.length
+      : undefined,
     depthMaps,
     tsdf,
     surfaceVertices: surface.vertices,

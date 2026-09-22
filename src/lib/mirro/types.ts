@@ -240,7 +240,8 @@ export type BodyMultiViewStereo = {
     | "wasm-popcnt32-v1";
   numericKernel?:
     | "js-scalar"
-    | "wasm-simd-v1";
+    | "wasm-simd-v1"
+    | "wasm-simd-hotpath-v2";
   executionBackend?:
     | "main-js"
     | "main-wasm"

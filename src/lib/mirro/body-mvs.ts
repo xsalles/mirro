@@ -441,14 +441,14 @@ function frontHullDepth(params: {
 
   const bounds = depthBounds(params.hull, params.viewId);
   const step = Math.max(
-    0.4,
+    0.55,
     Math.min(
       ...(params.hull.gridStepCm ?? [
         params.hull.voxelSizeCm,
         params.hull.voxelSizeCm,
         params.hull.voxelSizeCm,
       ]),
-    ) * 0.55,
+    ) * 0.85,
   );
 
   let previousDepth = bounds.max + step;

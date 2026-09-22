@@ -4,6 +4,12 @@ import {
   type RgbaImage,
 } from "./body-calibration";
 import { buildBodyVisualHull } from "./body-visual-hull";
+import {
+  BODY_VIEW_LABEL,
+  BODY_VIEW_SEQUENCE,
+  CORE_BODY_SIDES,
+  isCoreBodySide,
+} from "./body-views";
 import { decodeForCalibration } from "./image-processing";
 import {
   applyMetricViewCalibration,
@@ -24,15 +30,9 @@ import type {
   BodyMeasurements,
   BodySide,
   BodySilhouette,
+  BodyViewId,
   OpticalCalibrationProfile,
 } from "./types";
-
-const SIDE_LABELS: Record<BodySide, string> = {
-  front: "frente",
-  right: "lateral direita",
-  back: "costas",
-  left: "lateral esquerda",
-};
 
 function opticalAspectCompatible(
   image: RgbaImage,
@@ -70,15 +70,28 @@ function applyDedicatedOptics(
 }
 
 export async function calibrateBodyFromPhotos(
-  photos: Record<BodySide, Blob>,
+  photos: Partial<Record<BodyViewId, Blob>>,
   measurements: BodyMeasurements,
   optics?: OpticalCalibrationProfile,
 ): Promise<BodyCalibration> {
   let opticsMismatch = false;
 
+  for (const side of CORE_BODY_SIDES) {
+    if (!photos[side]) {
+      throw new Error(
+        `${BODY_VIEW_LABEL[side]}: foto obrigatória ausente.`,
+      );
+    }
+  }
+
+  const activeViews = BODY_VIEW_SEQUENCE.filter(
+    (view) => Boolean(photos[view]),
+  );
+
   const rawEntries = await Promise.all(
-    (Object.entries(photos) as Array<[BodySide, Blob]>).map(
-      async ([side, blob]) => {
+    activeViews.map(
+      async (side) => {
+        const blob = photos[side]!;
         try {
           const decoded = await decodeForCalibration(blob);
           const canApplyOptics = Boolean(
@@ -112,7 +125,7 @@ export async function calibrateBodyFromPhotos(
               ? error.message
               : "Não foi possível segmentar a imagem.";
           throw new Error(
-            `${SIDE_LABELS[side]}: ${detail}`,
+            `${BODY_VIEW_LABEL[side]}: ${detail}`,
           );
         }
       },
@@ -139,10 +152,13 @@ export async function calibrateBodyFromPhotos(
     (
       entry,
     ): entry is typeof entry & {
+      side: BodySide;
       viewCalibration: NonNullable<
         typeof entry.viewCalibration
       >;
-    } => Boolean(entry.viewCalibration),
+    } =>
+      isCoreBodySide(entry.side) &&
+      Boolean(entry.viewCalibration),
   );
 
   if (rawViewEntries.length === 4) {
@@ -204,10 +220,13 @@ export async function calibrateBodyFromPhotos(
               (
                 entry,
               ): entry is typeof entry & {
+                side: BodySide;
                 viewCalibration: NonNullable<
                   typeof entry.viewCalibration
                 >;
-              } => Boolean(entry.viewCalibration),
+              } =>
+                isCoreBodySide(entry.side) &&
+                Boolean(entry.viewCalibration),
             );
 
           if (undistortedViewEntries.length === 4) {
@@ -263,10 +282,17 @@ export async function calibrateBodyFromPhotos(
     }
   }
 
-  const silhouettes = Object.fromEntries(
+  const denseSilhouettes = Object.fromEntries(
     workingEntries.map((entry) => [
       entry.side,
       entry.silhouette,
+    ]),
+  ) as Partial<Record<BodyViewId, BodySilhouette>>;
+
+  const silhouettes = Object.fromEntries(
+    CORE_BODY_SIDES.map((side) => [
+      side,
+      denseSilhouettes[side]!,
     ]),
   ) as Record<BodySide, BodySilhouette>;
 
@@ -279,19 +305,24 @@ export async function calibrateBodyFromPhotos(
           silhouettes[side],
           calibratedViews[side],
         );
+      denseSilhouettes[side] = silhouettes[side];
     }
   }
 
+  const entryBySide = Object.fromEntries(
+    workingEntries.map((entry) => [entry.side, entry]),
+  ) as Partial<Record<BodyViewId, (typeof workingEntries)[number]>>;
+
   const images = Object.fromEntries(
-    workingEntries.map((entry) => [
-      entry.side,
-      entry.image,
+    CORE_BODY_SIDES.map((side) => [
+      side,
+      entryBySide[side]!.image,
     ]),
   ) as Record<BodySide, RgbaImage>;
   const masks = Object.fromEntries(
-    workingEntries.map((entry) => [
-      entry.side,
-      entry.mask,
+    CORE_BODY_SIDES.map((side) => [
+      side,
+      entryBySide[side]!.mask,
     ]),
   ) as Record<BodySide, Uint8Array>;
 
@@ -324,15 +355,17 @@ export async function calibrateBodyFromPhotos(
               height: entry.image.height,
             },
           ]),
-        ) as Record<
-          BodySide,
-          {
-            mask: Uint8Array;
-            width: number;
-            height: number;
-          }
+        ) as Partial<
+          Record<
+            BodyViewId,
+            {
+              mask: Uint8Array;
+              width: number;
+              height: number;
+            }
+          >
         >,
-        silhouettes,
+        silhouettes: denseSilhouettes,
         baseMesh: base.mesh,
         bodyHeightCm: measurements.heightCm,
       });
@@ -368,23 +401,31 @@ export async function calibrateBodyFromPhotos(
   ];
 
   const hasVisualHull = Boolean(visualHull);
+  const hasEightViewSdf = Boolean(
+    visualHull?.viewCount === 8 &&
+      visualHull.signedDistanceField,
+  );
   const hasBodyLens = cameraRig?.version === 2;
   const version: BodyCalibration["version"] =
-    hasVisualHull
-      ? 6
-      : hasBodyLens
-        ? 5
-        : cameraRig
-          ? 4
-          : base.version;
+    hasEightViewSdf
+      ? 7
+      : hasVisualHull
+        ? 6
+        : hasBodyLens
+          ? 5
+          : cameraRig
+            ? 4
+            : base.version;
   const method: BodyCalibration["method"] =
-    hasVisualHull
-      ? "visual-hull-multiband-v6"
-      : hasBodyLens
-        ? "lens-undistorted-local-color-surface-v5"
-        : cameraRig
-          ? "pinhole-bundle-anatomical-v4"
-          : base.method;
+    hasEightViewSdf
+      ? "eight-view-sdf-gradient-seams-v7"
+      : hasVisualHull
+        ? "visual-hull-multiband-v6"
+        : hasBodyLens
+          ? "lens-undistorted-local-color-surface-v5"
+          : cameraRig
+            ? "pinhole-bundle-anatomical-v4"
+            : base.method;
 
   const opticalScore = optics
     ? optics.conditionScore * 0.04
@@ -409,6 +450,7 @@ export async function calibrateBodyFromPhotos(
     version,
     method,
     mesh,
+    denseSilhouettes,
     viewCalibration:
       calibratedViews ?? base.viewCalibration,
     cameraRig,

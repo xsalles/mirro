@@ -261,7 +261,11 @@ export async function buildBodyTextureAtlas(params: {
   return canvas;
 }
 
-export function bodyAtlasUvs(vertices: number[], heightCm: number) {
+export function bodyAtlasUvs(
+  vertices: number[],
+  heightCm: number,
+  centerZProfile?: number[],
+) {
   const uv = new Array<number>((vertices.length / 3) * 2);
   const halfHeight = heightCm / 2;
 
@@ -270,13 +274,16 @@ export function bodyAtlasUvs(vertices: number[], heightCm: number) {
     const x = vertices[offset];
     const y = vertices[offset + 1];
     const z = vertices[offset + 2];
-    const angle = Math.atan2(x, z);
-    const u = ((angle / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
     const v = clamp(
       (halfHeight - y) / Math.max(1, heightCm),
       0,
       1,
     );
+    const centerZ = centerZProfile?.length
+      ? sampleProfile(centerZProfile, v)
+      : 0;
+    const angle = Math.atan2(x, z - centerZ);
+    const u = ((angle / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
 
     uv[vertex * 2] = u;
     uv[vertex * 2 + 1] = v;

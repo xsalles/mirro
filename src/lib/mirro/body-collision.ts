@@ -1,6 +1,208 @@
-import type { BodyCollisionPrimitive, BodyMesh } from "./types";
+import type {
+  BodyCollisionPrimitive,
+  BodyMesh,
+  BodyVisualHull,
+} from "./types";
 
 type Vec3 = [number, number, number];
+
+const VISUAL_HULL_CACHE = new WeakMap<BodyVisualHull, Uint8Array>();
+
+function decodeVisualHull(hull: BodyVisualHull) {
+  const cached = VISUAL_HULL_CACHE.get(hull);
+  if (cached) return cached;
+
+  const total =
+    hull.resolution.x *
+    hull.resolution.y *
+    hull.resolution.z;
+  const occupancy = new Uint8Array(total);
+  let cursor = 0;
+  let value = hull.occupancyRle.start;
+
+  for (const run of hull.occupancyRle.runs) {
+    if (value) occupancy.fill(1, cursor, Math.min(total, cursor + run));
+    cursor += run;
+    value = value ? 0 : 1;
+    if (cursor >= total) break;
+  }
+
+  VISUAL_HULL_CACHE.set(hull, occupancy);
+  return occupancy;
+}
+
+function hullGridPoint(
+  hull: BodyVisualHull,
+  x: number,
+  y: number,
+  z: number,
+) {
+  const nx = hull.resolution.x;
+  const ny = hull.resolution.y;
+  const nz = hull.resolution.z;
+  return {
+    x: Math.round(
+      ((x - hull.originCm[0]) /
+        Math.max(1e-6, hull.boundsCm.width)) *
+        Math.max(1, nx - 1),
+    ),
+    y: Math.round(
+      ((y - hull.originCm[1]) /
+        Math.max(1e-6, hull.boundsCm.height)) *
+        Math.max(1, ny - 1),
+    ),
+    z: Math.round(
+      ((z - hull.originCm[2]) /
+        Math.max(1e-6, hull.boundsCm.depth)) *
+        Math.max(1, nz - 1),
+    ),
+  };
+}
+
+function hullIndex(
+  hull: BodyVisualHull,
+  x: number,
+  y: number,
+  z: number,
+) {
+  if (
+    x < 0 ||
+    y < 0 ||
+    z < 0 ||
+    x >= hull.resolution.x ||
+    y >= hull.resolution.y ||
+    z >= hull.resolution.z
+  ) {
+    return -1;
+  }
+  return (
+    (y * hull.resolution.z + z) *
+      hull.resolution.x +
+    x
+  );
+}
+
+function visualHullOccupied(
+  hull: BodyVisualHull,
+  x: number,
+  y: number,
+  z: number,
+  thicknessCm = 0,
+) {
+  const occupancy = decodeVisualHull(hull);
+  const point = hullGridPoint(hull, x, y, z);
+  const radius = Math.max(
+    0,
+    Math.ceil(
+      thicknessCm /
+        Math.max(0.35, hull.voxelSizeCm),
+    ),
+  );
+
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dz = -radius; dz <= radius; dz += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const index = hullIndex(
+          hull,
+          point.x + dx,
+          point.y + dy,
+          point.z + dz,
+        );
+        if (index >= 0 && occupancy[index]) return true;
+      }
+    }
+  }
+
+  const direct = hullIndex(
+    hull,
+    point.x,
+    point.y,
+    point.z,
+  );
+  return direct >= 0 && Boolean(occupancy[direct]);
+}
+
+function projectOutsideVisualHull(
+  hull: BodyVisualHull,
+  positions: number[],
+  particleIndex: number,
+  thicknessCm: number,
+) {
+  const offset = particleIndex * 3;
+  const x = positions[offset];
+  const y = positions[offset + 1];
+  const z = positions[offset + 2];
+
+  if (!visualHullOccupied(hull, x, y, z, thicknessCm)) {
+    return false;
+  }
+
+  const point = hullGridPoint(hull, x, y, z);
+  const occupancy = decodeVisualHull(hull);
+  const stepX =
+    hull.boundsCm.width /
+    Math.max(1, hull.resolution.x - 1);
+  const stepY =
+    hull.boundsCm.height /
+    Math.max(1, hull.resolution.y - 1);
+  const stepZ =
+    hull.boundsCm.depth /
+    Math.max(1, hull.resolution.z - 1);
+  const directions = [
+    { dx: 1, dy: 0, dz: 0, step: stepX, penalty: 1 },
+    { dx: -1, dy: 0, dz: 0, step: stepX, penalty: 1 },
+    { dx: 0, dy: 0, dz: 1, step: stepZ, penalty: 1 },
+    { dx: 0, dy: 0, dz: -1, step: stepZ, penalty: 1 },
+    { dx: 0, dy: 1, dz: 0, step: stepY, penalty: 1.6 },
+    { dx: 0, dy: -1, dz: 0, step: stepY, penalty: 1.6 },
+  ] as const;
+
+  let best:
+    | {
+        gx: number;
+        gy: number;
+        gz: number;
+        cost: number;
+      }
+    | null = null;
+  const maxSteps = 14;
+
+  for (const direction of directions) {
+    for (let distance = 1; distance <= maxSteps; distance += 1) {
+      const gx = point.x + direction.dx * distance;
+      const gy = point.y + direction.dy * distance;
+      const gz = point.z + direction.dz * distance;
+      const index = hullIndex(hull, gx, gy, gz);
+      if (index < 0) {
+        const cost = distance * direction.step * direction.penalty;
+        if (!best || cost < best.cost) {
+          best = { gx, gy, gz, cost };
+        }
+        break;
+      }
+      if (!occupancy[index]) {
+        const cost = distance * direction.step * direction.penalty;
+        if (!best || cost < best.cost) {
+          best = { gx, gy, gz, cost };
+        }
+        break;
+      }
+    }
+  }
+
+  if (!best) return false;
+
+  positions[offset] =
+    hull.originCm[0] +
+    best.gx * stepX;
+  positions[offset + 1] =
+    hull.originCm[1] +
+    best.gy * stepY;
+  positions[offset + 2] =
+    hull.originCm[2] +
+    best.gz * stepZ;
+  return true;
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -272,6 +474,15 @@ export function projectParticleOutsideBody(
   particleIndex: number,
   thicknessCm: number,
 ) {
+  if (mesh.visualHull) {
+    return projectOutsideVisualHull(
+      mesh.visualHull,
+      positions,
+      particleIndex,
+      thicknessCm,
+    );
+  }
+
   if (!mesh.collisionPrimitives?.length) {
     return projectLegacyHull(mesh, positions, particleIndex, thicknessCm);
   }
@@ -315,6 +526,16 @@ export function pointInsideExpandedBody(
   z: number,
   thicknessCm = 0,
 ) {
+  if (mesh.visualHull) {
+    return visualHullOccupied(
+      mesh.visualHull,
+      x,
+      y,
+      z,
+      thicknessCm,
+    );
+  }
+
   if (mesh.collisionPrimitives?.length) {
     return mesh.collisionPrimitives.some((primitive) =>
       pointInsidePrimitive(primitive, x, y, z, thicknessCm),

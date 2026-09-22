@@ -2,9 +2,15 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { deleteMedia, loadState, saveMedia, saveState } from "@/lib/mirro/db";
-import type { BodyProfile, Garment, MediaRef, MirroState } from "@/lib/mirro/types";
+import type {
+  BodyProfile,
+  Garment,
+  MediaRef,
+  MirroState,
+  OpticalCalibrationProfile,
+} from "@/lib/mirro/types";
 
-const INITIAL: MirroState = { profile: null, garments: [] };
+const INITIAL: MirroState = { profile: null, garments: [], optics: null };
 
 type MirroContextValue = {
   state: MirroState;
@@ -12,6 +18,7 @@ type MirroContextValue = {
   saveProfile: (profile: BodyProfile, media: Array<{ blob: Blob; ref: MediaRef }>) => Promise<void>;
   addGarment: (garment: Garment, media: Array<{ blob: Blob; ref: MediaRef }>) => Promise<void>;
   removeGarment: (garment: Garment) => Promise<void>;
+  saveOptics: (optics: OpticalCalibrationProfile) => Promise<void>;
 };
 
 const MirroContext = createContext<MirroContextValue | null>(null);
@@ -55,7 +62,23 @@ export function MirroProvider({ children }: { children: ReactNode }) {
     setState(next);
   }, [state]);
 
-  const value = useMemo(() => ({ state, ready, saveProfile, addGarment, removeGarment }), [state, ready, saveProfile, addGarment, removeGarment]);
+  const saveOptics = useCallback(async (optics: OpticalCalibrationProfile) => {
+    const next = { ...state, optics };
+    await saveState(next);
+    setState(next);
+  }, [state]);
+
+  const value = useMemo(
+    () => ({
+      state,
+      ready,
+      saveProfile,
+      addGarment,
+      removeGarment,
+      saveOptics,
+    }),
+    [state, ready, saveProfile, addGarment, removeGarment, saveOptics],
+  );
   return <MirroContext.Provider value={value}>{children}</MirroContext.Provider>;
 }
 

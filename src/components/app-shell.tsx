@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Grid2X2, ScanLine, Shirt, Sparkles } from "lucide-react";
+import { Aperture, Grid2X2, ScanLine, Shirt, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 
 const NAV = [
   { href: "/app", label: "Início", icon: Grid2X2 },
   { href: "/app/body", label: "Meu corpo", icon: ScanLine },
+  { href: "/app/optics", label: "Óptica", icon: Aperture },
   { href: "/app/wardrobe", label: "Guarda-roupa", icon: Shirt },
   { href: "/app/try-on", label: "Experimentar", icon: Sparkles },
 ];
@@ -37,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
         <main className="min-w-0">{children}</main>
       </div>
-      <nav aria-label="Navegação principal" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-4 rounded-2xl border border-[var(--line)] bg-white/95 p-1 shadow-[0_10px_35px_rgba(17,19,24,.12)] backdrop-blur-xl lg:hidden">
+      <nav aria-label="Navegação principal" className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-2xl border border-[var(--line)] bg-white/95 p-1 shadow-[0_10px_35px_rgba(17,19,24,.12)] backdrop-blur-xl lg:hidden">
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = href === "/app" ? pathname === href : pathname.startsWith(href);
           return (

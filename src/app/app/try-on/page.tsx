@@ -377,6 +377,7 @@ export default function TryOnPage() {
                   bodyTextureUrls={bodyTextureUrls}
                   fabricWeight={garment?.fabricWeight ?? "medium"}
                   fabricProfile={garment?.physicalProfile}
+                  optics={state.optics}
                 />
               ) : (
                 <ClothSimulationPreview

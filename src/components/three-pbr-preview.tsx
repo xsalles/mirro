@@ -12,6 +12,7 @@ import type {
   FabricPhysicalProfile,
   FabricWeight,
   GarmentMesh,
+  OpticalCalibrationProfile,
 } from "@/lib/mirro/types";
 
 type ThreeModule = typeof import("three/webgpu");
@@ -86,6 +87,7 @@ export function ThreePbrPreview({
   bodyTextureUrls,
   fabricWeight,
   fabricProfile,
+  optics,
 }: {
   bodyMesh: BodyMesh;
   garmentMesh: GarmentMesh;
@@ -97,6 +99,7 @@ export function ThreePbrPreview({
   bodyTextureUrls?: Partial<Record<BodySide, string | null>>;
   fabricWeight: FabricWeight;
   fabricProfile?: FabricPhysicalProfile;
+  optics?: OpticalCalibrationProfile | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<SceneRuntime | null>(null);
@@ -155,27 +158,35 @@ export function ThreePbrPreview({
         return texture;
       };
 
+      const denseSurface = bodyMesh.visualHull;
+      const bodyVertices =
+        denseSurface?.vertices ?? bodyMesh.vertices;
+      const bodyNormals =
+        denseSurface?.normals ?? bodyMesh.normals;
+      const bodyIndices =
+        denseSurface?.indices ?? bodyMesh.indices;
+
       const bodyGeometry = new THREE.BufferGeometry();
       bodyGeometry.setAttribute(
         "position",
-        new THREE.Float32BufferAttribute(bodyMesh.vertices, 3),
+        new THREE.Float32BufferAttribute(bodyVertices, 3),
       );
       bodyGeometry.setAttribute(
         "normal",
-        new THREE.Float32BufferAttribute(bodyMesh.normals, 3),
+        new THREE.Float32BufferAttribute(bodyNormals, 3),
       );
       bodyGeometry.setAttribute(
         "uv",
         new THREE.Float32BufferAttribute(
           bodyAtlasUvs(
-            bodyMesh.vertices,
+            bodyVertices,
             bodyMesh.boundsCm.height,
             bodyMesh.centerZProfile,
           ),
           2,
         ),
       );
-      bodyGeometry.setIndex(bodyMesh.indices);
+      bodyGeometry.setIndex(bodyIndices);
 
       let bodyTexture: InstanceType<ThreeModule["Texture"]> | null = null;
       if (bodyCalibration && bodyTextureUrls) {
@@ -185,6 +196,7 @@ export function ThreePbrPreview({
             silhouettes: bodyCalibration.silhouettes,
             textureCalibration: bodyCalibration.textureCalibration,
             cameraRig: bodyCalibration.cameraRig,
+            optics,
           });
           if (disposed) return;
           const atlasTexture = new THREE.CanvasTexture(atlas);
@@ -362,6 +374,7 @@ export function ThreePbrPreview({
     bodyTextureUrls,
     fabricWeight,
     fabricProfile,
+    optics,
   ]);
 
   useEffect(() => {
@@ -410,7 +423,9 @@ export function ThreePbrPreview({
             : "Inicializando PBR…"}
       </div>
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        Atlas corporal 360° com equalização de exposição e feather blending entre as quatro vistas, além de depth buffer e PBR do tecido.
+        {bodyMesh.visualHull
+          ? "Visual hull denso + atlas corporal multibanda 360°, depth buffer e PBR do tecido."
+          : "Atlas corporal multibanda 360° com correção local de cor, depth buffer e PBR do tecido."}
       </figcaption>
     </figure>
   );

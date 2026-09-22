@@ -1,3 +1,5 @@
+import type { RgbaImage } from "./body-calibration";
+
 function colorDistance(a: number[], b: number[]) {
   return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
 }
@@ -52,4 +54,42 @@ export async function removeFlatBackground(file: File): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Não foi possível processar a peça."))), "image/png", 0.96);
   });
+}
+
+
+const MAX_CALIBRATION_SIDE = 900;
+
+export async function decodeForCalibration(
+  blob: Blob,
+  maxSide = MAX_CALIBRATION_SIDE,
+): Promise<RgbaImage> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const scale = Math.min(
+      1,
+      maxSide / Math.max(bitmap.width, bitmap.height),
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", {
+      willReadFrequently: true,
+    });
+    if (!context) {
+      throw new Error(
+        "O navegador não disponibilizou o Canvas 2D.",
+      );
+    }
+    context.drawImage(bitmap, 0, 0, width, height);
+    const image = context.getImageData(0, 0, width, height);
+    return {
+      width,
+      height,
+      data: image.data,
+    };
+  } finally {
+    bitmap.close();
+  }
 }

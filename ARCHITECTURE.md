@@ -10,7 +10,7 @@ Next.js App Router + React client components for local-only workflows. IndexedDB
 2. Border pixels estimate the background color distribution.
 3. A connected flood fill removes background pixels reachable from the image edges.
 4. The largest remaining connected component becomes the person's binary silhouette.
-5. Each silhouette is normalized by detected body height into a 64-sample width profile.
+5. Each silhouette is normalized by detected body height into a 96-sample width profile plus a per-height contour-center profile.
 6. Front + back are confidence-weighted into X width; left + right become Z depth.
 7. Known physical height converts normalized profiles into centimeters.
 8. Chest, waist and hips are detected inside constrained torso bands, then corrected to the user's measured circumferences.
@@ -21,7 +21,7 @@ Next.js App Router + React client components for local-only workflows. IndexedDB
 
 BodyMesh v2 is deterministic and anatomical enough for separate sleeve/leg collision, while still remaining a parametric reconstruction rather than a full photogrammetric scan. Existing v1 profiles remain readable and are rebuilt as v2 in memory when try-on starts.
 
-## Camera model — Brown–Conrady v5 implemented
+## Camera model — reusable optics v6 implemented
 
 The printable A4 target still supplies a metric plane and four deterministic correspondences per body view. MIRRO now additionally solves a shared pinhole camera rig when all four target detections are valid:
 
@@ -35,7 +35,9 @@ A poorly conditioned capture (for example targets that are all nearly fronto-par
 
 After the v4 shared-pinhole solve, MIRRO now estimates Brown–Conrady radial/tangential coefficients (`k1`, `k2`, `k3`, `p1`, `p2`) from all four target views using regularized least squares. Distortion is activated only when it measurably reduces reprojection RMS. When activated, all four calibration frames are inverse-remapped with bilinear sampling, silhouettes/markers are extracted again, and the CameraRig is solved again in undistorted coordinates. Raw stored photos are likewise remapped at calibrated resolution before body-texture projection.
 
-The target-only distortion solve is intentionally conservative. A dedicated multi-tilt optical-calibration capture would condition higher-order lens terms more strongly than four ordinary body views.
+MIRRO now also has a dedicated optical workflow. Six to twelve target photos at varied tilts/positions solve shared intrinsics and Brown–Conrady distortion independently from the body session. Only the derived optical profile is persisted; calibration photos are not stored. Body capture can reuse this lens profile and therefore does not require the target to be present in all four body photos.
+
+Dense reconstruction uses a different capture contract: the phone remains fixed while the person turns in place through 0°/90°/180°/270°. Moving the target between body views does not create a shared world frame and must not be treated as multi-view camera registration.
 
 ## Garment image + calibration pipeline — implemented
 
@@ -107,9 +109,9 @@ Structural constraints are tagged as warp or weft; XPBD selects separate complia
 
 The try-on runs 144 simulation steps in a dedicated Web Worker. It sends bounded position snapshots back to the UI for determinate progress and preview refreshes. Browsers without Worker support fall back to small `requestAnimationFrame` batches.
 
-## Collision model — anatomical + self-collision implemented
+## Collision model — dense visual hull + anatomical fallback implemented
 
-Body collision now evaluates the union of anatomical primitives:
+When BodyCalibration v6 contains a dense visual hull, cloth collision queries the compressed voxel occupancy volume directly and projects penetrating particles to the nearest empty axial cell. Otherwise body collision evaluates the union of anatomical primitives:
 
 - measured elliptical torso hull
 - head ellipsoid
@@ -132,7 +134,7 @@ Physical mode now defaults to a Three.js r186 scene using `WebGPURenderer`.
 - real garment front/back photos are sampled through semantic UV regions.
 - the four saved body views are exposure/white-balance calibrated from segmented body pixels.
 - v5 adds a bounded 3×8 local RGB/exposure field per view; local gains stay close to the global correction to avoid aggressive recoloring.
-- the renderer builds one 360° cylindrical body atlas with overlapping angular coverage and cosine feather blending.
+- v6 builds a three-band Laplacian-style body atlas: low-frequency color uses a wide overlap, medium-frequency structure a narrower overlap, and fine detail the narrowest dominant-view seam.
 - BodyMesh vertices use continuous cylindrical UVs, eliminating the previous hard material boundary between front/right/back/left.
 - `MeshPhysicalMaterial` adds fabric roughness, sheen and low clearcoat; measured density/stiffness influence the material appearance when available.
 - light / medium / heavy fabric presets affect the PBR appearance as well as physics.
@@ -143,16 +145,19 @@ The dependency-free Canvas renderer remains as **Malha técnica** for debugging 
 
 The renderer materially improves realism, but exact visual fit still depends on capture calibration, anatomical approximation and fabric-parameter quality.
 
-## Surface reconstruction v5
+## Surface reconstruction v6
 
-Body silhouettes are now sampled at 96 vertical sections instead of 64. The torso uses 48 angular segments instead of 32. Each lateral silhouette also stores a per-height contour-center profile. Opposing lateral views are mirrored/weighted into a front–back centerline shift, so torso sections no longer have to remain centered at `z=0`. The same centerline drives rendered geometry, cylindrical UVs and the elliptical-hull collision primitive.
+The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 additionally keeps each full binary silhouette mask and carves a bounded 3D voxel volume under the fixed-camera/person-turntable assumption. A voxel survives only when its orthogonal projection is inside all four body masks. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
 
-This is still silhouette-derived surface reconstruction rather than dense stereo or photogrammetric point-cloud fusion: shape that is invisible in the four outlines cannot be recovered honestly.
+The visual hull is used by the PBR body renderer and persisted together with RLE-compressed voxel occupancy for cloth collision. The anatomical BodyMesh remains available for semantic landmarks, garment initialization and fallback.
+
+This is classical shape-from-silhouette, not dense stereo: concavities or surface detail invisible in the four silhouettes cannot be recovered honestly.
 
 ## Engine roadmap
 
-- Add a dedicated optical calibration capture with multiple target tilts for stronger intrinsic/distortion conditioning.
-- Add local seam optimization / Poisson-style color blending beyond bounded gain fields.
+- Add optional 8-view/45° body capture to tighten the visual hull around shoulders, arms and crotch.
+- Replace axial voxel ejection with a signed-distance field / gradient projection for smoother dense collision.
+- Add Poisson-gradient seam optimization after the current three-band multiband blend.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
 - Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.

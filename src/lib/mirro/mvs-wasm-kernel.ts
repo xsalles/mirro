@@ -38,11 +38,12 @@ export function getCensusPopcountKernel() {
 
   try {
     if (typeof WebAssembly !== "undefined") {
-      const module = new WebAssembly.Module(
-        WASM_POPCNT32,
-      );
+      const wasmModule =
+        new WebAssembly.Module(
+          WASM_POPCNT32,
+        );
       const instance = new WebAssembly.Instance(
-        module,
+        wasmModule,
       );
       const exports =
         instance.exports as unknown as PopcntExports;

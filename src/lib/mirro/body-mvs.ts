@@ -4,22 +4,33 @@ import {
   BODY_VIEW_SEQUENCE,
 } from "./body-views";
 import { sampleSignedDistance } from "./signed-distance-field";
+import { scaleOpticalIntrinsics } from "./optical-calibration";
 import type {
   BodyDepthMap,
   BodyMultiViewStereo,
+  CameraIntrinsics,
   BodySilhouette,
   BodyTsdfVolume,
   BodyViewId,
   BodyVisualHull,
+  OpticalCalibrationProfile,
 } from "./types";
 
 type Vec3 = [number, number, number];
+
+type TurntableCamera = {
+  intrinsics: CameraIntrinsics;
+  distanceCm: number;
+  horizontalOffsetCm: number;
+  verticalOffsetCm: number;
+};
 
 type MvsView = {
   image: RgbaImage;
   mask: Uint8Array;
   silhouette: BodySilhouette;
   luminance: Float32Array;
+  camera?: TurntableCamera;
 };
 
 const INVALID_DEPTH = -32768;
@@ -53,6 +64,69 @@ function buildLuminance(image: RgbaImage) {
       image.data[offset + 2] * 0.0722;
   }
   return output;
+}
+
+function calibratedCameraForView(params: {
+  image: RgbaImage;
+  silhouette: BodySilhouette;
+  bodyHeightCm: number;
+  optics?: OpticalCalibrationProfile;
+}): TurntableCamera | undefined {
+  const optics = params.optics;
+  if (!optics) return undefined;
+
+  const imageAspect =
+    params.image.width / Math.max(1, params.image.height);
+  const opticsAspect =
+    optics.imageWidth / Math.max(1, optics.imageHeight);
+  if (
+    Math.abs(
+      imageAspect / Math.max(1e-6, opticsAspect) - 1,
+    ) > 0.025
+  ) {
+    return undefined;
+  }
+
+  const intrinsics = scaleOpticalIntrinsics(
+    optics.intrinsics,
+    {
+      width: optics.imageWidth,
+      height: optics.imageHeight,
+    },
+    {
+      width: params.image.width,
+      height: params.image.height,
+    },
+  );
+
+  const distanceCm = Math.max(
+    params.bodyHeightCm * 1.05,
+    (intrinsics.fy * params.bodyHeightCm) /
+      Math.max(1, params.silhouette.bounds.height),
+  );
+  const centerProfile =
+    sampleProfile(
+      params.silhouette.centerProfile,
+      0.5,
+    ) * params.silhouette.bounds.height;
+  const bodyCenterX =
+    params.silhouette.bounds.x +
+    params.silhouette.bounds.width / 2 +
+    centerProfile;
+  const bodyCenterY =
+    params.silhouette.bounds.y +
+    params.silhouette.bounds.height / 2;
+
+  return {
+    intrinsics,
+    distanceCm,
+    horizontalOffsetCm:
+      ((intrinsics.cx - bodyCenterX) * distanceCm) /
+      Math.max(1e-6, intrinsics.fx),
+    verticalOffsetCm:
+      ((bodyCenterY - intrinsics.cy) * distanceCm) /
+      Math.max(1e-6, intrinsics.fy),
+  };
 }
 
 function rowGeometry(

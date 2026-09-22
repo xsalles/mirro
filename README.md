@@ -7,19 +7,20 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - 4-view body capture + real measurements
 - Classical connected-background body silhouette extraction
 - Confidence-weighted multi-view body calibration
-- Centimeter-based BodyMesh v1 (64 rings × 32 segments)
+- Anatomical centimeter-based BodyMesh v2 with separate torso, head, arms and legs
 - Garment front/back alpha calibration from the user's real photos
-- Two-panel GarmentMesh generated from the real garment silhouette
+- Semantic GarmentMesh: torso + sleeves for tops; waistband + split legs/crotch for bottoms
 - XPBD structural / shear / bend / seam constraints
 - Web Worker simulation with main-thread fallback
 - BodyMesh collision, spatial-hash garment self-collision, damping, friction approximation and fabric presets
 - Interactive physical 3D beta preview with simulation progress
-- Real front/back garment textures warped over the solved UV mesh
+- Real front/back garment textures warped over semantic solved UV regions
+- Three.js PBR preview with WebGPU-first rendering and WebGL2 fallback
 - Photo-based 2D fallback
 - IndexedDB-only private local storage
 - Responsive product shell
 
-The current **Físico 3D beta** is a genuine local cloth simulation, but it is not yet a photoreal final try-on. BodyMesh v1 merges limb topology, pants use a single two-panel envelope, and the Canvas renderer is not yet a PBR/photoreal renderer. See `ARCHITECTURE.md`.
+The current **Físico 3D beta** now has anatomical collision, semantic garment topology and a PBR renderer. It still should not be sold as exact photoreal fit: camera geometry is weak-perspective, anatomical proportions outside the measured torso remain parametric, and fabric behavior comes from presets. See `ARCHITECTURE.md`.
 
 ## Development
 

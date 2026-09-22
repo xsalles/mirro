@@ -11,6 +11,8 @@ const MARKERS = [
 
 export default function CalibrationCardPage() {
   return (
+    <>
+      <style>{`@page { size: A4; margin: 0; } @media print { html, body { margin: 0 !important; padding: 0 !important; background: white !important; } }`}</style>
     <main className="min-h-screen bg-[var(--canvas)] px-4 py-8 text-[var(--ink)] print:bg-white print:p-0">
       <div className="mx-auto mb-6 flex max-w-4xl flex-wrap items-center justify-between gap-3 print:hidden">
         <div>
@@ -80,5 +82,6 @@ export default function CalibrationCardPage() {
         </div>
       </section>
     </main>
+    </>
   );
 }

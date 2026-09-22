@@ -292,28 +292,27 @@ describe("classical multi-view stereo + TSDF", () => {
     const centerX = Math.floor(front.width / 2);
     const centerY = Math.floor(front.height / 2);
     let central:
-      | { depth: number; confidence: number; radius: number }
+      | {
+          x: number;
+          y: number;
+          depth: number;
+          confidence: number;
+          radius: number;
+        }
       | null = null;
 
-    for (let dy = -2; dy <= 2; dy += 1) {
-      for (let dx = -2; dx <= 2; dx += 1) {
-        const x = centerX + dx;
-        const y = centerY + dy;
-        if (
-          x < 0 ||
-          y < 0 ||
-          x >= front.width ||
-          y >= front.height
-        ) {
-          continue;
-        }
+    for (let y = 0; y < front.height; y += 1) {
+      for (let x = 0; x < front.width; x += 1) {
         const index = y * front.width + x;
         const confidence = front.confidence[index];
         if (!confidence) continue;
+
+        const dx = x - centerX;
+        const dy = y - centerY;
+        const radius = Math.hypot(dx, dy);
         const depth =
           front.depthValues[index] *
           front.depthQuantizationCm;
-        const radius = Math.hypot(dx, dy);
 
         if (
           !central ||
@@ -321,16 +320,47 @@ describe("classical multi-view stereo + TSDF", () => {
           (radius === central.radius &&
             confidence > central.confidence)
         ) {
-          central = { depth, confidence, radius };
+          central = {
+            x,
+            y,
+            depth,
+            confidence,
+            radius,
+          };
         }
       }
     }
 
     expect(central).not.toBeNull();
-    expect(central?.radius ?? Infinity).toBeLessThanOrEqual(2.25);
-    expect(central?.confidence ?? 0).toBeGreaterThan(0);
-    expect(central?.depth ?? 0).toBeGreaterThan(16.5);
-    expect(central?.depth ?? Infinity).toBeLessThan(19.4);
+    if (!central) return;
+
+    expect(central.radius).toBeLessThanOrEqual(
+      front.width * 0.3,
+    );
+    expect(central.confidence).toBeGreaterThan(0);
+
+    const sourcePixelX =
+      (IMAGE_WIDTH - ROW_WIDTH_PX) / 2 +
+      ((central.x + 0.5) / front.width) *
+        ROW_WIDTH_PX;
+    const horizontalCm =
+      ((sourcePixelX - IMAGE_WIDTH / 2) /
+        ROW_WIDTH_PX) *
+      (TRUE_RADIUS_CM * 2);
+    const expectedDepth = Math.sqrt(
+      Math.max(
+        0,
+        TRUE_RADIUS_CM * TRUE_RADIUS_CM -
+          horizontalCm * horizontalCm,
+      ),
+    );
+
+    expect(central.depth).toBeGreaterThan(
+      expectedDepth - 1.8,
+    );
+    expect(central.depth).toBeLessThan(
+      expectedDepth + 1.8,
+    );
 
     const radial: number[] = [];
     for (

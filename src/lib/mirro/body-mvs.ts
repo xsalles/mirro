@@ -10,9 +10,8 @@ import {
   getCensusPopcountKernel,
 } from "./mvs-wasm-kernel";
 import {
-  dotProduct,
   getMvsNumericBackend,
-  sumSquares,
+  patchStatistics,
   weightedMean,
 } from "./mvs-simd-kernel";
 import {
@@ -1332,37 +1331,11 @@ function robustPatchScore(params: {
     return null;
   }
 
-  let meanA = 0;
-  let meanB = 0;
-  for (let index = 0; index < refValues.length; index += 1) {
-    meanA += refValues[index];
-    meanB += targetValues[index];
-  }
-  meanA /= refValues.length;
-  meanB /= targetValues.length;
-
-  const sampleCount = refValues.length;
-  const covariance =
-    dotProduct(refValues, targetValues) -
-    sampleCount * meanA * meanB;
-  const varianceA = Math.max(
-    0,
-    sumSquares(refValues) -
-      sampleCount * meanA * meanA,
+  const patch = patchStatistics(
+    refValues,
+    targetValues,
   );
-  const varianceB = Math.max(
-    0,
-    sumSquares(targetValues) -
-      sampleCount * meanB * meanB,
-  );
-
-  const denominator = Math.sqrt(
-    varianceA * varianceB,
-  );
-  const zncc =
-    denominator > 36
-      ? clamp(covariance / denominator, -1, 1)
-      : 0;
+  const zncc = patch.zncc;
   const censusSimilarity =
     1 -
     censusHamming32(refCensus, targetCensus) /
@@ -1376,9 +1349,7 @@ function robustPatchScore(params: {
         )
       : 0;
 
-  const textureEnergy = Math.sqrt(
-    varianceA / Math.max(1, refValues.length),
-  );
+  const textureEnergy = patch.textureEnergy;
   const robustScore =
     Math.max(0, zncc) * 0.58 +
     censusSimilarity * 0.27 +
@@ -3028,15 +2999,25 @@ export function buildClassicalMultiViewStereo(
   const matchingKernel =
     getCensusPopcountKernel().backend;
   const numericKernel = getMvsNumericBackend();
+  const isV11 =
+    optimizedRig?.metadata.version === 3 &&
+    BODY_VIEW_SEQUENCE.some(
+      (view) =>
+        depthMaps[view].version === 3 &&
+        (depthMaps[view].propagatedCount ?? 0) > 0,
+    );
   const isV10 =
+    !isV11 &&
     optimizedRig?.metadata.version === 2 &&
     views.front.pyramid.length >= 2;
 
   return {
-    version: isV10 ? 3 : 2,
-    method: isV10
-      ? "turntable-bundle-pyramid-simd-v3"
-      : "turntable-robust-subpixel-tsdf-v2",
+    version: isV11 ? 4 : isV10 ? 3 : 2,
+    method: isV11
+      ? "turntable-feature-bundle-dense-simd-v4"
+      : isV10
+        ? "turntable-bundle-pyramid-simd-v3"
+        : "turntable-robust-subpixel-tsdf-v2",
     projectionModel: usePerspective
       ? "calibrated-turntable-perspective"
       : "metric-orthographic",
@@ -3050,11 +3031,13 @@ export function buildClassicalMultiViewStereo(
         )
       : undefined,
     matchingModel: "zncc-census-gradient",
-    depthRefinement: "coarse-to-fine-parabolic",
+    depthRefinement: isV11
+      ? "coarse-to-fine-parabolic-edge-aware"
+      : "coarse-to-fine-parabolic",
     matchingKernel,
     numericKernel,
     executionBackend:
-      numericKernel === "wasm-simd-v1"
+      numericKernel !== "js-scalar"
         ? "main-wasm-simd"
         : matchingKernel === "wasm-popcnt32-v1"
           ? "main-wasm"

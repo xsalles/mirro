@@ -691,7 +691,7 @@ function depthMapCoordinates(
   };
 }
 
-function nearestDepthSample(
+function sampleDepthMap(
   map: BodyDepthMap,
   silhouette: BodySilhouette,
   pixelX: number,
@@ -703,26 +703,133 @@ function nearestDepthSample(
     pixelX,
     pixelY,
   );
-  const x = Math.round(coordinate.x);
-  const y = Math.round(coordinate.y);
-  if (
-    x < 0 ||
-    y < 0 ||
-    x >= map.width ||
-    y >= map.height
-  ) {
-    return null;
+  const x0 = Math.floor(coordinate.x);
+  const y0 = Math.floor(coordinate.y);
+  const tx = coordinate.x - x0;
+  const ty = coordinate.y - y0;
+  const taps = [
+    [x0, y0, (1 - tx) * (1 - ty)],
+    [x0 + 1, y0, tx * (1 - ty)],
+    [x0, y0 + 1, (1 - tx) * ty],
+    [x0 + 1, y0 + 1, tx * ty],
+  ] as const;
+
+  let depthSum = 0;
+  let confidenceSum = 0;
+  let weightSum = 0;
+
+  for (const [x, y, interpolation] of taps) {
+    if (
+      x < 0 ||
+      y < 0 ||
+      x >= map.width ||
+      y >= map.height ||
+      interpolation <= 0
+    ) {
+      continue;
+    }
+
+    const index = y * map.width + x;
+    const depth = decodeDepth(map, index);
+    const confidence = map.confidence[index] / 255;
+    if (depth === null || confidence <= 0) continue;
+    const weight = interpolation * confidence;
+    depthSum += depth * weight;
+    confidenceSum += confidence * interpolation;
+    weightSum += weight;
   }
-  const index = y * map.width + x;
-  const depth = decodeDepth(map, index);
-  if (depth === null || map.confidence[index] === 0) {
-    return null;
-  }
+
+  if (weightSum < 0.08) return null;
   return {
-    depth,
-    confidence: map.confidence[index] / 255,
+    depth: depthSum / weightSum,
+    confidence: clamp(
+      confidenceSum,
+      0,
+      1,
+    ),
   };
 }
+
+function regularizeDepthMap(map: BodyDepthMap) {
+  const nextDepth = new Int16Array(map.depthValues);
+  const nextConfidence = new Uint8Array(map.confidence);
+
+  for (let y = 0; y < map.height; y += 1) {
+    for (let x = 0; x < map.width; x += 1) {
+      const index = y * map.width + x;
+      const center = decodeDepth(map, index);
+      if (center === null) continue;
+
+      const neighbors: Array<{
+        depth: number;
+        confidence: number;
+      }> = [];
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const px = x + dx;
+          const py = y + dy;
+          if (
+            px < 0 ||
+            py < 0 ||
+            px >= map.width ||
+            py >= map.height
+          ) {
+            continue;
+          }
+          const neighborIndex = py * map.width + px;
+          const depth = decodeDepth(map, neighborIndex);
+          const confidence =
+            map.confidence[neighborIndex] / 255;
+          if (depth === null || confidence < 0.14) continue;
+          neighbors.push({ depth, confidence });
+        }
+      }
+
+      if (neighbors.length < 2) {
+        nextConfidence[index] = Math.round(
+          nextConfidence[index] * 0.72,
+        );
+        continue;
+      }
+
+      const ordered = neighbors
+        .map((item) => item.depth)
+        .sort((a, b) => a - b);
+      const median =
+        ordered[Math.floor(ordered.length / 2)];
+      const deviation = Math.abs(center - median);
+
+      if (neighbors.length >= 4 && deviation <= 2.6) {
+        const blended =
+          center * 0.72 + median * 0.28;
+        nextDepth[index] = quantizeDepth(blended);
+        const support = clamp(
+          neighbors.length / 8,
+          0,
+          1,
+        );
+        nextConfidence[index] = Math.round(
+          clamp(
+            nextConfidence[index] / 255 *
+              (0.88 + support * 0.12),
+            0,
+            1,
+          ) * 255,
+        );
+      } else if (deviation > 3.2) {
+        nextConfidence[index] = Math.round(
+          nextConfidence[index] * 0.55,
+        );
+      }
+    }
+  }
+
+  map.depthValues.set(nextDepth);
+  map.confidence.set(nextConfidence);
+}
+
 
 function enforceCrossViewConsistency(params: {
   maps: Record<BodyViewId, BodyDepthMap>;
@@ -788,7 +895,7 @@ function enforceCrossViewConsistency(params: {
             continue;
           }
 
-          const sample = nearestDepthSample(
+          const sample = sampleDepthMap(
             params.maps[targetView],
             target.silhouette,
             projected.x,
@@ -874,7 +981,7 @@ function tsdfSampleFromMap(params: {
     return null;
   }
 
-  const sample = nearestDepthSample(
+  const sample = sampleDepthMap(
     params.map,
     params.view.silhouette,
     projected.x,
@@ -1340,6 +1447,10 @@ export function buildClassicalMultiViewStereo(params: {
     ]),
   ) as Record<BodyViewId, BodyDepthMap>;
 
+  for (const view of BODY_VIEW_SEQUENCE) {
+    regularizeDepthMap(depthMaps[view]);
+  }
+
   const crossViewConsistency =
     enforceCrossViewConsistency({
       maps: depthMaps,
@@ -1360,7 +1471,17 @@ export function buildClassicalMultiViewStereo(params: {
       map.meanConfidence * map.validCount;
   }
 
-  if (validDepthCount < 120) return null;
+  const meanConfidence = validDepthCount
+    ? confidenceSum / validDepthCount
+    : 0;
+
+  if (
+    validDepthCount < 120 ||
+    meanConfidence < 0.16 ||
+    crossViewConsistency < 0.12
+  ) {
+    return null;
+  }
 
   const tsdf = buildTsdf({
     hull: params.hull,
@@ -1386,9 +1507,7 @@ export function buildClassicalMultiViewStereo(params: {
     surfaceNormals: surface.normals,
     surfaceIndices: surface.indices,
     validDepthCount,
-    meanConfidence: validDepthCount
-      ? confidenceSum / validDepthCount
-      : 0,
+    meanConfidence,
     crossViewConsistency,
     fusedVoxelCount,
   };

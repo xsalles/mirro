@@ -290,6 +290,7 @@ function calibratedCameraForView(params: {
 
 type OptimizedTurntableRig = {
   cameras: Record<BodyViewId, TurntableCamera>;
+  poses?: Record<BodyViewId, TurntablePose>;
   metadata: NonNullable<
     BodyMultiViewStereo["turntableRig"]
   >;
@@ -394,6 +395,147 @@ function optimizeTurntableCameras(
   };
 }
 
+function optimizeTurntableBundleFromSilhouettes(params: {
+  candidates: Record<
+    BodyViewId,
+    TurntableCamera | undefined
+  >;
+  silhouettes: Record<BodyViewId, BodySilhouette>;
+  bodyHeightCm: number;
+}): OptimizedTurntableRig | undefined {
+  const initial = optimizeTurntableCameras(
+    params.candidates,
+  );
+  if (!initial) return undefined;
+
+  const resolved = params.candidates as Record<
+    BodyViewId,
+    TurntableCamera
+  >;
+  const sharedDistanceCm =
+    initial.metadata.sharedCameraDistanceCm ??
+    median(
+      BODY_VIEW_SEQUENCE.map(
+        (view) => resolved[view].distanceCm,
+      ),
+    );
+
+  const bundleViews: TurntableBundleView[] =
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const camera = resolved[view];
+      const silhouette = params.silhouettes[view];
+      const samples = [
+        0.18, 0.3, 0.42, 0.5, 0.58, 0.7, 0.82,
+      ].map((vertical) => {
+        const row = rowGeometry(
+          silhouette,
+          params.bodyHeightCm,
+          vertical,
+        );
+        const pixelY =
+          silhouette.bounds.y +
+          vertical *
+            Math.max(
+              1,
+              silhouette.bounds.height - 1,
+            );
+        return {
+          bodyYcm:
+            params.bodyHeightCm / 2 -
+            vertical * params.bodyHeightCm,
+          observedHorizontalCm:
+            ((row.centerX -
+              camera.intrinsics.cx) *
+              sharedDistanceCm) /
+            Math.max(
+              1e-6,
+              camera.intrinsics.fx,
+            ),
+          observedVerticalCm:
+            (-(pixelY -
+              camera.intrinsics.cy) *
+              sharedDistanceCm) /
+            Math.max(
+              1e-6,
+              camera.intrinsics.fy,
+            ),
+        };
+      });
+
+      return {
+        view,
+        nominalAngleRad:
+          BODY_VIEW_ANGLE_RAD[view],
+        samples,
+      };
+    });
+
+  const solved = solveTurntableBundle({
+    views: bundleViews,
+    initialAxisCenterCm: [
+      initial.metadata.axisCenterCm[0],
+      initial.metadata.axisCenterCm[2],
+    ],
+    maxIterations: 7,
+  });
+
+  const cameras = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => [
+      view,
+      {
+        ...resolved[view],
+        distanceCm: sharedDistanceCm,
+        horizontalOffsetCm:
+          solved.opticalOffsetCm[0],
+        verticalOffsetCm:
+          solved.opticalOffsetCm[1],
+      },
+    ]),
+  ) as Record<BodyViewId, TurntableCamera>;
+
+  const poses = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => [
+      view,
+      {
+        angleRad:
+          BODY_VIEW_ANGLE_RAD[view] +
+          solved.angleOffsetsRad[view],
+        axisOriginCm: solved.axisOriginCm,
+        axisDirection: solved.axisDirection,
+      },
+    ]),
+  ) as Record<BodyViewId, TurntablePose>;
+
+  return {
+    cameras,
+    poses,
+    metadata: {
+      version: 2,
+      method: "robust-axis-angle-tilt-bundle-v2",
+      optimized: true,
+      axisCenterCm: solved.axisOriginCm,
+      sharedCameraDistanceCm,
+      verticalOpticalOffsetCm:
+        solved.opticalOffsetCm[1],
+      centerResidualCm:
+        initial.metadata.centerResidualCm,
+      axisDirection: solved.axisDirection,
+      axisTiltDeg: solved.axisTiltDeg,
+      perViewAngleOffsetDeg:
+        Object.fromEntries(
+          BODY_VIEW_SEQUENCE.map((view) => [
+            view,
+            (solved.angleOffsetsRad[view] *
+              180) /
+              Math.PI,
+          ]),
+        ),
+      bundleResidualCm: solved.residualCm,
+      bundleIterations: solved.iterations,
+    },
+  };
+}
+
 function rowGeometry(
   silhouette: BodySilhouette,
   bodyHeightCm: number,
@@ -477,23 +619,64 @@ function pixelToViewCoordinates(
   };
 }
 
-function viewCoordinatesToWorld(
+function nominalBodyToView(
   view: BodyViewId,
-  horizontalCm: number,
-  y: number,
-  depthCm: number,
+  point: Vec3,
 ): Vec3 {
   const angle = BODY_VIEW_ANGLE_RAD[view];
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   return [
-    horizontalCm * cos + depthCm * sin,
-    y,
-    -horizontalCm * sin + depthCm * cos,
+    point[0] * cos - point[2] * sin,
+    point[1],
+    point[0] * sin + point[2] * cos,
   ];
 }
 
-function worldDepth(
+function bodyToViewPoint(
+  view: BodyViewId,
+  point: Vec3,
+  pose?: TurntablePose,
+): Vec3 {
+  if (!pose) {
+    return nominalBodyToView(view, point);
+  }
+
+  return rotateAroundAxis(
+    point,
+    pose.axisOriginCm,
+    pose.axisDirection,
+    -pose.angleRad,
+  );
+}
+
+function viewCoordinatesToWorld(
+  view: BodyViewId,
+  horizontalCm: number,
+  y: number,
+  depthCm: number,
+  pose?: TurntablePose,
+): Vec3 {
+  if (!pose) {
+    const angle = BODY_VIEW_ANGLE_RAD[view];
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return [
+      horizontalCm * cos + depthCm * sin,
+      y,
+      -horizontalCm * sin + depthCm * cos,
+    ];
+  }
+
+  return rotateAroundAxis(
+    [horizontalCm, y, depthCm],
+    pose.axisOriginCm,
+    pose.axisDirection,
+    pose.angleRad,
+  );
+}
+
+function nominalWorldDepth(
   view: BodyViewId,
   x: number,
   z: number,
@@ -505,18 +688,6 @@ function worldDepth(
   );
 }
 
-function worldHorizontal(
-  view: BodyViewId,
-  x: number,
-  z: number,
-) {
-  const angle = BODY_VIEW_ANGLE_RAD[view];
-  return (
-    x * Math.cos(angle) -
-    z * Math.sin(angle)
-  );
-}
-
 function worldToPixel(
   viewId: BodyViewId,
   view: MvsView,
@@ -525,12 +696,14 @@ function worldToPixel(
   y: number,
   z: number,
 ) {
-  const depthCm = worldDepth(viewId, x, z);
-  const horizontalCm = worldHorizontal(
+  const viewPoint = bodyToViewPoint(
     viewId,
-    x,
-    z,
+    [x, y, z],
+    view.pose,
   );
+  const horizontalCm = viewPoint[0];
+  const viewY = viewPoint[1];
+  const depthCm = viewPoint[2];
 
   if (view.camera) {
     const { intrinsics, distanceCm } = view.camera;
@@ -553,7 +726,7 @@ function worldToPixel(
       y:
         intrinsics.cy -
         (intrinsics.fy *
-          (y - view.camera.verticalOffsetCm)) /
+          (viewY - view.camera.verticalOffsetCm)) /
           cameraDepth,
       depthCm,
     };
@@ -561,7 +734,7 @@ function worldToPixel(
 
   const silhouette = view.silhouette;
   const vertical = clamp(
-    (bodyHeightCm / 2 - y) /
+    (bodyHeightCm / 2 - viewY) /
       Math.max(1, bodyHeightCm),
     0,
     1,
@@ -650,7 +823,7 @@ function maxHullSurfaceDepth(
     for (let offset = 0; offset < vertices.length; offset += 3) {
       maximum = Math.max(
         maximum,
-        worldDepth(
+        nominalWorldDepth(
           view,
           vertices[offset],
           vertices[offset + 2],
@@ -668,17 +841,30 @@ function maxHullSurfaceDepth(
 function depthBounds(
   hull: BodyVisualHull,
   view: BodyViewId,
+  pose?: TurntablePose,
 ) {
   const minX = hull.originCm[0];
+  const minY = hull.originCm[1];
   const minZ = hull.originCm[2];
   const maxX = minX + hull.boundsCm.width;
+  const maxY = minY + hull.boundsCm.height;
   const maxZ = minZ + hull.boundsCm.depth;
-  const values = [
-    worldDepth(view, minX, minZ),
-    worldDepth(view, minX, maxZ),
-    worldDepth(view, maxX, minZ),
-    worldDepth(view, maxX, maxZ),
-  ];
+  const values: number[] = [];
+
+  for (const x of [minX, maxX]) {
+    for (const y of [minY, maxY]) {
+      for (const z of [minZ, maxZ]) {
+        values.push(
+          bodyToViewPoint(
+            view,
+            [x, y, z],
+            pose,
+          )[2],
+        );
+      }
+    }
+  }
+
   return {
     min: Math.min(...values),
     max: Math.max(...values),
@@ -696,7 +882,11 @@ function frontHullDepth(params: {
   const sdf = params.hull.signedDistanceField;
   if (!sdf) return null;
 
-  const bounds = depthBounds(params.hull, params.viewId);
+  const bounds = depthBounds(
+    params.hull,
+    params.viewId,
+    params.reference.pose,
+  );
   const step = Math.max(
     0.55,
     Math.min(
@@ -728,6 +918,7 @@ function frontHullDepth(params: {
       coordinate.horizontalCm,
       coordinate.y,
       depth,
+      params.reference.pose,
     );
     const distance = sampleSignedDistance(
       sdf,
@@ -755,6 +946,7 @@ function frontHullDepth(params: {
           coordinate.horizontalCm,
           coordinate.y,
           mid,
+          params.reference.pose,
         );
         const midDistance = sampleSignedDistance(
           sdf,
@@ -830,6 +1022,7 @@ function robustPatchScore(params: {
     referenceCenterCoordinate.horizontalCm,
     referenceCenterCoordinate.y,
     params.candidateDepthCm,
+    params.reference.pose,
   );
   const targetCenter = worldToPixel(
     params.targetView,
@@ -903,6 +1096,7 @@ function robustPatchScore(params: {
       refCoordinate.horizontalCm,
       refCoordinate.y,
       params.candidateDepthCm,
+      params.reference.pose,
     );
     const projected = worldToPixel(
       params.targetView,
@@ -1212,6 +1406,7 @@ function createRawDepthMap(params: {
           coordinate.horizontalCm,
           coordinate.y,
           candidateDepth,
+          reference.pose,
         );
         const sdf = params.hull.signedDistanceField;
         if (
@@ -1557,6 +1752,7 @@ function enforceCrossViewConsistency(params: {
           coordinate.horizontalCm,
           coordinate.y,
           depth,
+          reference.pose,
         );
 
         let comparable = 0;

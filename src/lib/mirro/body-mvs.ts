@@ -2051,22 +2051,34 @@ export function buildClassicalMultiViewStereo(params: {
   const usePerspective = BODY_VIEW_SEQUENCE.every(
     (view) => Boolean(cameraCandidates[view]),
   );
+  const optimizedRig = usePerspective
+    ? optimizeTurntableCameras(cameraCandidates)
+    : undefined;
+  const activeCameras =
+    optimizedRig?.cameras ?? cameraCandidates;
 
   const views = Object.fromEntries(
-    BODY_VIEW_SEQUENCE.map((view) => [
-      view,
-      {
-        image: params.images[view],
-        mask: params.masks[view],
-        silhouette: params.silhouettes[view],
-        luminance: buildLuminance(
-          params.images[view],
-        ),
-        camera: usePerspective
-          ? cameraCandidates[view]
-          : undefined,
-      },
-    ]),
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const image = params.images[view];
+      const luminance = buildLuminance(image);
+      return [
+        view,
+        {
+          image,
+          mask: params.masks[view],
+          silhouette: params.silhouettes[view],
+          luminance,
+          gradient: buildGradientMagnitude(
+            luminance,
+            image.width,
+            image.height,
+          ),
+          camera: usePerspective
+            ? activeCameras[view]
+            : undefined,
+        },
+      ];
+    }),
   ) as Record<BodyViewId, MvsView>;
 
   const depthMaps = Object.fromEntries(
@@ -2098,11 +2110,14 @@ export function buildClassicalMultiViewStereo(params: {
 
   let validDepthCount = 0;
   let confidenceSum = 0;
+  let subpixelRefinedCount = 0;
   for (const view of BODY_VIEW_SEQUENCE) {
     const map = depthMaps[view];
     validDepthCount += map.validCount;
     confidenceSum +=
       map.meanConfidence * map.validCount;
+    subpixelRefinedCount +=
+      map.subpixelRefinedCount ?? 0;
   }
 
   const meanConfidence = validDepthCount
@@ -2154,20 +2169,40 @@ export function buildClassicalMultiViewStereo(params: {
     if (weight > 0) fusedVoxelCount += 1;
   }
 
+  const matchingKernel =
+    getCensusPopcountKernel().backend;
+
   return {
-    version: 1,
-    method: "turntable-zncc-tsdf-v1",
+    version: 2,
+    method: "turntable-robust-subpixel-tsdf-v2",
     projectionModel: usePerspective
       ? "calibrated-turntable-perspective"
       : "metric-orthographic",
     meanCameraDistanceCm: usePerspective
-      ? BODY_VIEW_SEQUENCE.reduce(
-          (sum, view) =>
-            sum +
-            (cameraCandidates[view]?.distanceCm ?? 0),
-          0,
-        ) / BODY_VIEW_SEQUENCE.length
+      ? optimizedRig?.metadata.sharedCameraDistanceCm ??
+        median(
+          BODY_VIEW_SEQUENCE.map(
+            (view) =>
+              cameraCandidates[view]?.distanceCm ?? 0,
+          ),
+        )
       : undefined,
+    matchingModel: "zncc-census-gradient",
+    depthRefinement: "coarse-to-fine-parabolic",
+    matchingKernel,
+    executionBackend:
+      matchingKernel === "wasm-popcnt32-v1"
+        ? "main-wasm"
+        : "main-js",
+    subpixelRefinedCount,
+    turntableRig:
+      optimizedRig?.metadata ?? {
+        version: 1,
+        method: "shared-axis-center-least-squares-v1",
+        optimized: false,
+        axisCenterCm: [0, 0, 0],
+        centerResidualCm: 0,
+      },
     depthMaps,
     tsdf,
     surfaceVertices: surface.vertices,

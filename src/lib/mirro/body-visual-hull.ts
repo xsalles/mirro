@@ -443,17 +443,17 @@ function extractSurface(params: {
             );
 
           const insideReference: Vec3 = [
-            inside.reduce(
+            inside.reduce<number>(
               (sum, corner) =>
                 sum + cornerPoints[corner][0],
               0,
             ) / inside.length,
-            inside.reduce(
+            inside.reduce<number>(
               (sum, corner) =>
                 sum + cornerPoints[corner][1],
               0,
             ) / inside.length,
-            inside.reduce(
+            inside.reduce<number>(
               (sum, corner) =>
                 sum + cornerPoints[corner][2],
               0,

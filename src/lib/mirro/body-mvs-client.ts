@@ -24,7 +24,7 @@ function markMainBackend(
 ) {
   if (!result) return result;
   result.executionBackend =
-    result.numericKernel === "wasm-simd-v1"
+    result.numericKernel !== "js-scalar"
       ? "main-wasm-simd"
       : result.matchingKernel === "wasm-popcnt32-v1"
         ? "main-wasm"

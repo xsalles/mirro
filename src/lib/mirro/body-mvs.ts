@@ -10,9 +10,8 @@ import {
   getCensusPopcountKernel,
 } from "./mvs-wasm-kernel";
 import {
-  dotProduct,
   getMvsNumericBackend,
-  sumSquares,
+  patchStatistics,
   weightedMean,
 } from "./mvs-simd-kernel";
 import {
@@ -63,6 +62,7 @@ type MvsView = {
   pyramid: FeatureLevel[];
   camera?: TurntableCamera;
   pose?: TurntablePose;
+  bundleAccepted?: boolean;
 };
 
 const INVALID_DEPTH = -32768;
@@ -395,12 +395,82 @@ function optimizeTurntableCameras(
   };
 }
 
+function imageFeatureAxisAnchor(params: {
+  gradient: Float32Array;
+  mask: Uint8Array;
+  width: number;
+  height: number;
+  rowCenterX: number;
+  rowWidthPx: number;
+  pixelY: number;
+}) {
+  const y = clamp(
+    Math.round(params.pixelY),
+    1,
+    params.height - 2,
+  );
+  const half = Math.max(3, params.rowWidthPx / 2);
+  const leftStart = clamp(
+    Math.floor(params.rowCenterX - half),
+    1,
+    params.width - 2,
+  );
+  const leftEnd = clamp(
+    Math.floor(params.rowCenterX - half * 0.18),
+    leftStart,
+    params.width - 2,
+  );
+  const rightStart = clamp(
+    Math.ceil(params.rowCenterX + half * 0.18),
+    1,
+    params.width - 2,
+  );
+  const rightEnd = clamp(
+    Math.ceil(params.rowCenterX + half),
+    rightStart,
+    params.width - 2,
+  );
+
+  const strongest = (start: number, end: number) => {
+    let bestX = -1;
+    let best = 0;
+    for (let x = start; x <= end; x += 1) {
+      const index = y * params.width + x;
+      if (!params.mask[index]) continue;
+      const value = params.gradient[index] ?? 0;
+      if (value > best) {
+        best = value;
+        bestX = x;
+      }
+    }
+    return { x: bestX, strength: best };
+  };
+
+  const left = strongest(leftStart, leftEnd);
+  const right = strongest(rightStart, rightEnd);
+  if (left.x < 0 || right.x < 0) return null;
+
+  const confidence = clamp(
+    Math.min(left.strength, right.strength) / 52,
+    0,
+    1,
+  );
+  if (confidence < 0.08) return null;
+
+  return {
+    x: (left.x + right.x) / 2,
+    confidence,
+  };
+}
+
 function optimizeTurntableBundleFromSilhouettes(params: {
   candidates: Record<
     BodyViewId,
     TurntableCamera | undefined
   >;
   silhouettes: Record<BodyViewId, BodySilhouette>;
+  images: Record<BodyViewId, RgbaImage>;
+  masks: Record<BodyViewId, Uint8Array>;
   bodyHeightCm: number;
 }): OptimizedTurntableRig | undefined {
   const initial = optimizeTurntableCameras(
@@ -420,10 +490,27 @@ function optimizeTurntableBundleFromSilhouettes(params: {
       ),
     );
 
+  const featureFields = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const image = params.images[view];
+      const luminance = buildLuminance(image);
+      return [
+        view,
+        buildGradientMagnitude(
+          luminance,
+          image.width,
+          image.height,
+        ),
+      ];
+    }),
+  ) as Record<BodyViewId, Float32Array>;
+
   const bundleViews: TurntableBundleView[] =
     BODY_VIEW_SEQUENCE.map((view) => {
       const camera = resolved[view];
       const silhouette = params.silhouettes[view];
+      const image = params.images[view];
+      const featureConfidences: number[] = [];
       const samples = [
         0.18, 0.3, 0.42, 0.5, 0.58, 0.7, 0.82,
       ].map((vertical) => {
@@ -439,6 +526,19 @@ function optimizeTurntableBundleFromSilhouettes(params: {
               1,
               silhouette.bounds.height - 1,
             );
+        const feature = imageFeatureAxisAnchor({
+          gradient: featureFields[view],
+          mask: params.masks[view],
+          width: image.width,
+          height: image.height,
+          rowCenterX: row.centerX,
+          rowWidthPx: row.rowWidthPx,
+          pixelY,
+        });
+        if (feature) {
+          featureConfidences.push(feature.confidence);
+        }
+
         return {
           bodyYcm:
             params.bodyHeightCm / 2 -
@@ -459,14 +559,39 @@ function optimizeTurntableBundleFromSilhouettes(params: {
               1e-6,
               camera.intrinsics.fy,
             ),
+          featureHorizontalCm: feature
+            ? ((feature.x -
+                camera.intrinsics.cx) *
+                sharedDistanceCm) /
+              Math.max(
+                1e-6,
+                camera.intrinsics.fx,
+              )
+            : undefined,
+          featureConfidence:
+            feature?.confidence,
         };
       });
+
+      const featureConfidence =
+        featureConfidences.length > 0
+          ? featureConfidences.reduce(
+              (sum, value) => sum + value,
+              0,
+            ) / featureConfidences.length
+          : 0;
 
       return {
         view,
         nominalAngleRad:
           BODY_VIEW_ANGLE_RAD[view],
         samples,
+        frameConfidence: clamp(
+          silhouette.confidence *
+            (0.55 + featureConfidence * 0.45),
+          0,
+          1,
+        ),
       };
     });
 
@@ -478,6 +603,10 @@ function optimizeTurntableBundleFromSilhouettes(params: {
     ],
     maxIterations: 7,
   });
+
+  if (!solved.axisVerticalValidation.valid) {
+    return initial;
+  }
 
   const cameras = Object.fromEntries(
     BODY_VIEW_SEQUENCE.map((view) => [
@@ -510,8 +639,8 @@ function optimizeTurntableBundleFromSilhouettes(params: {
     cameras,
     poses,
     metadata: {
-      version: 2,
-      method: "robust-axis-angle-tilt-bundle-v2",
+      version: 3,
+      method: "feature-residual-frame-rejection-bundle-v3",
       optimized: true,
       axisCenterCm: solved.axisOriginCm,
       sharedCameraDistanceCm: sharedDistanceCm,
@@ -532,6 +661,14 @@ function optimizeTurntableBundleFromSilhouettes(params: {
         ),
       bundleResidualCm: solved.residualCm,
       bundleIterations: solved.iterations,
+      featureResidualCm: solved.featureResidualCm,
+      rejectedViews: solved.rejectedViews,
+      acceptedViews: solved.acceptedViews,
+      axisVerticalValidated:
+        solved.axisVerticalValidation.valid,
+      axisVerticalResidualSlopeCmPerCm:
+        solved.axisVerticalValidation
+          .residualSlopeCmPerCm,
     },
   };
 }
@@ -1198,37 +1335,11 @@ function robustPatchScore(params: {
     return null;
   }
 
-  let meanA = 0;
-  let meanB = 0;
-  for (let index = 0; index < refValues.length; index += 1) {
-    meanA += refValues[index];
-    meanB += targetValues[index];
-  }
-  meanA /= refValues.length;
-  meanB /= targetValues.length;
-
-  const sampleCount = refValues.length;
-  const covariance =
-    dotProduct(refValues, targetValues) -
-    sampleCount * meanA * meanB;
-  const varianceA = Math.max(
-    0,
-    sumSquares(refValues) -
-      sampleCount * meanA * meanA,
+  const patch = patchStatistics(
+    refValues,
+    targetValues,
   );
-  const varianceB = Math.max(
-    0,
-    sumSquares(targetValues) -
-      sampleCount * meanB * meanB,
-  );
-
-  const denominator = Math.sqrt(
-    varianceA * varianceB,
-  );
-  const zncc =
-    denominator > 36
-      ? clamp(covariance / denominator, -1, 1)
-      : 0;
+  const zncc = patch.zncc;
   const censusSimilarity =
     1 -
     censusHamming32(refCensus, targetCensus) /
@@ -1242,9 +1353,7 @@ function robustPatchScore(params: {
         )
       : 0;
 
-  const textureEnergy = Math.sqrt(
-    varianceA / Math.max(1, refValues.length),
-  );
+  const textureEnergy = patch.textureEnergy;
   const robustScore =
     Math.max(0, zncc) * 0.58 +
     censusSimilarity * 0.27 +
@@ -1273,6 +1382,12 @@ function scoreCandidate(params: {
       params.referenceView,
       offsets,
     )) {
+      if (
+        params.views[targetView].bundleAccepted ===
+        false
+      ) {
+        continue;
+      }
       const score = robustPatchScore({
         referenceView: params.referenceView,
         targetView,
@@ -1375,6 +1490,23 @@ function createRawDepthMap(params: {
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);
   const confidence = new Uint8Array(width * height);
+
+  if (reference.bundleAccepted === false) {
+    return {
+      version: 2,
+      method: "turntable-robust-coarse-to-fine-v2",
+      view: params.view,
+      width,
+      height,
+      depthQuantizationCm: DEPTH_QUANTIZATION_CM,
+      depthValues,
+      confidence,
+      validCount: 0,
+      meanConfidence: 0,
+      subpixelRefinedCount: 0,
+      meanSubpixelOffsetCm: 0,
+    };
+  }
   let validCount = 0;
   let confidenceSum = 0;
   let subpixelRefinedCount = 0;
@@ -1796,6 +1928,238 @@ function regularizeDepthMap(map: BodyDepthMap) {
   map.confidence.set(nextConfidence);
 }
 
+
+function edgeAwareUpsampleDepthMap(
+  map: BodyDepthMap,
+  view: MvsView,
+) {
+  if (
+    map.validCount < 2 ||
+    view.bundleAccepted === false
+  ) {
+    return map;
+  }
+
+  const targetWidth = clamp(
+    Math.round(map.width * 1.45),
+    map.width,
+    72,
+  );
+  const targetHeight = Math.max(
+    map.height,
+    Math.round(
+      map.height * (targetWidth / map.width),
+    ),
+  );
+  if (
+    targetWidth === map.width &&
+    targetHeight === map.height
+  ) {
+    return map;
+  }
+
+  const depthValues = new Int16Array(
+    targetWidth * targetHeight,
+  );
+  depthValues.fill(INVALID_DEPTH);
+  const confidence = new Uint8Array(
+    targetWidth * targetHeight,
+  );
+  let validCount = 0;
+  let confidenceSum = 0;
+  let propagatedCount = 0;
+
+  for (let ty = 0; ty < targetHeight; ty += 1) {
+    const pixelY =
+      view.silhouette.bounds.y +
+      ((ty + 0.5) / targetHeight) *
+        view.silhouette.bounds.height;
+    const sourceY =
+      ((pixelY - view.silhouette.bounds.y) /
+        Math.max(1, view.silhouette.bounds.height)) *
+        map.height -
+      0.5;
+
+    for (let tx = 0; tx < targetWidth; tx += 1) {
+      const pixelX =
+        view.silhouette.bounds.x +
+        ((tx + 0.5) / targetWidth) *
+          view.silhouette.bounds.width;
+      if (!maskContains(view, pixelX, pixelY)) {
+        continue;
+      }
+
+      const centerLuma = bilinear(
+        view.luminance,
+        view.image.width,
+        view.image.height,
+        pixelX,
+        pixelY,
+      );
+      const centerGradient = bilinear(
+        view.gradient,
+        view.image.width,
+        view.image.height,
+        pixelX,
+        pixelY,
+      );
+      if (
+        centerLuma === null ||
+        centerGradient === null
+      ) {
+        continue;
+      }
+
+      const sourceX =
+        ((pixelX - view.silhouette.bounds.x) /
+          Math.max(1, view.silhouette.bounds.width)) *
+          map.width -
+        0.5;
+      const baseX = Math.round(sourceX);
+      const baseY = Math.round(sourceY);
+      let weightedDepth = 0;
+      let weightSum = 0;
+      let confidenceWeighted = 0;
+      let support = 0;
+      let minDepth = Infinity;
+      let maxDepth = -Infinity;
+      let nearestWasValid = false;
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const sx = baseX + dx;
+          const sy = baseY + dy;
+          if (
+            sx < 0 ||
+            sy < 0 ||
+            sx >= map.width ||
+            sy >= map.height
+          ) {
+            continue;
+          }
+          const sourceIndex = sy * map.width + sx;
+          const depth = decodeDepth(map, sourceIndex);
+          const sourceConfidence =
+            map.confidence[sourceIndex] / 255;
+          if (
+            depth === null ||
+            sourceConfidence < 0.08
+          ) {
+            continue;
+          }
+
+          const sourcePixelX =
+            view.silhouette.bounds.x +
+            ((sx + 0.5) / map.width) *
+              view.silhouette.bounds.width;
+          const sourcePixelY =
+            view.silhouette.bounds.y +
+            ((sy + 0.5) / map.height) *
+              view.silhouette.bounds.height;
+          const luma = bilinear(
+            view.luminance,
+            view.image.width,
+            view.image.height,
+            sourcePixelX,
+            sourcePixelY,
+          );
+          const gradient = bilinear(
+            view.gradient,
+            view.image.width,
+            view.image.height,
+            sourcePixelX,
+            sourcePixelY,
+          );
+          if (luma === null || gradient === null) {
+            continue;
+          }
+
+          const spatialDistance = Math.hypot(
+            sx - sourceX,
+            sy - sourceY,
+          );
+          const spatialWeight = Math.exp(
+            -spatialDistance * spatialDistance * 0.72,
+          );
+          const appearanceWeight = Math.exp(
+            -Math.abs(luma - centerLuma) / 20,
+          );
+          const edgeWeight = Math.exp(
+            -Math.abs(gradient - centerGradient) / 24,
+          );
+          const weight =
+            spatialWeight *
+            appearanceWeight *
+            edgeWeight *
+            sourceConfidence;
+          if (weight < 0.008) continue;
+
+          weightedDepth += depth * weight;
+          confidenceWeighted +=
+            sourceConfidence * weight;
+          weightSum += weight;
+          support += 1;
+          minDepth = Math.min(minDepth, depth);
+          maxDepth = Math.max(maxDepth, depth);
+          if (
+            sx === Math.round(sourceX) &&
+            sy === Math.round(sourceY)
+          ) {
+            nearestWasValid = true;
+          }
+        }
+      }
+
+      if (
+        support < 2 ||
+        weightSum < 0.1 ||
+        maxDepth - minDepth > 2.4
+      ) {
+        continue;
+      }
+
+      const denseDepth = weightedDepth / weightSum;
+      const denseConfidence = clamp(
+        (confidenceWeighted / weightSum) *
+          (nearestWasValid ? 0.96 : 0.72) *
+          clamp(support / 5, 0.45, 1),
+        0,
+        1,
+      );
+      if (denseConfidence < 0.1) continue;
+
+      const targetIndex =
+        ty * targetWidth + tx;
+      depthValues[targetIndex] =
+        quantizeDepth(denseDepth);
+      confidence[targetIndex] = Math.round(
+        denseConfidence * 255,
+      );
+      validCount += 1;
+      confidenceSum += denseConfidence;
+      if (!nearestWasValid) {
+        propagatedCount += 1;
+      }
+    }
+  }
+
+  return {
+    ...map,
+    version: 3 as const,
+    method: "turntable-edge-aware-dense-v3" as const,
+    width: targetWidth,
+    height: targetHeight,
+    depthValues,
+    confidence,
+    validCount,
+    meanConfidence:
+      validCount > 0
+        ? confidenceSum / validCount
+        : 0,
+    propagatedCount,
+    sourceWidth: map.width,
+  };
+}
 
 function enforceCrossViewConsistency(params: {
   maps: Record<BodyViewId, BodyDepthMap>;
@@ -2487,12 +2851,17 @@ export function buildClassicalMultiViewStereo(
     ? optimizeTurntableBundleFromSilhouettes({
         candidates: cameraCandidates,
         silhouettes: params.silhouettes,
+        images: params.images,
+        masks: params.masks,
         bodyHeightCm: params.bodyHeightCm,
       })
     : undefined;
   const activeCameras =
     optimizedRig?.cameras ?? cameraCandidates;
   const activePoses = optimizedRig?.poses;
+  const rejectedBundleViews = new Set(
+    optimizedRig?.metadata.rejectedViews ?? [],
+  );
 
   const views = Object.fromEntries(
     BODY_VIEW_SEQUENCE.map((view) => {
@@ -2518,6 +2887,8 @@ export function buildClassicalMultiViewStereo(
           pose: usePerspective
             ? activePoses?.[view]
             : undefined,
+          bundleAccepted:
+            !rejectedBundleViews.has(view),
         },
       ];
     }),
@@ -2550,6 +2921,15 @@ export function buildClassicalMultiViewStereo(
         params.hull.voxelSizeCm * 0.85,
       ),
     });
+
+  if (optimizedRig?.metadata.version === 3) {
+    for (const view of BODY_VIEW_SEQUENCE) {
+      depthMaps[view] = edgeAwareUpsampleDepthMap(
+        depthMaps[view],
+        views[view],
+      );
+    }
+  }
 
   let validDepthCount = 0;
   let confidenceSum = 0;
@@ -2615,15 +2995,20 @@ export function buildClassicalMultiViewStereo(
   const matchingKernel =
     getCensusPopcountKernel().backend;
   const numericKernel = getMvsNumericBackend();
+  const isV11 =
+    optimizedRig?.metadata.version === 3;
   const isV10 =
+    !isV11 &&
     optimizedRig?.metadata.version === 2 &&
     views.front.pyramid.length >= 2;
 
   return {
-    version: isV10 ? 3 : 2,
-    method: isV10
-      ? "turntable-bundle-pyramid-simd-v3"
-      : "turntable-robust-subpixel-tsdf-v2",
+    version: isV11 ? 4 : isV10 ? 3 : 2,
+    method: isV11
+      ? "turntable-feature-bundle-dense-simd-v4"
+      : isV10
+        ? "turntable-bundle-pyramid-simd-v3"
+        : "turntable-robust-subpixel-tsdf-v2",
     projectionModel: usePerspective
       ? "calibrated-turntable-perspective"
       : "metric-orthographic",
@@ -2637,11 +3022,13 @@ export function buildClassicalMultiViewStereo(
         )
       : undefined,
     matchingModel: "zncc-census-gradient",
-    depthRefinement: "coarse-to-fine-parabolic",
+    depthRefinement: isV11
+      ? "coarse-to-fine-parabolic-edge-aware"
+      : "coarse-to-fine-parabolic",
     matchingKernel,
     numericKernel,
     executionBackend:
-      numericKernel === "wasm-simd-v1"
+      numericKernel !== "js-scalar"
         ? "main-wasm-simd"
         : matchingKernel === "wasm-popcnt32-v1"
           ? "main-wasm"

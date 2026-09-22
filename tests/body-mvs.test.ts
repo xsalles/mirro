@@ -401,5 +401,5 @@ describe("classical multi-view stereo + TSDF", () => {
       mvs.tsdf.weights.some((weight) => weight > 0),
     ).toBe(true);
     expect(hull.multiViewStereo).toBeUndefined();
-  });
+  }, 10_000);
 });

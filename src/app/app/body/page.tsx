@@ -42,6 +42,10 @@ export default function BodyPage() {
     upperArmCm: current?.upperArmCm ? String(current.upperArmCm) : "",
     thighCm: current?.thighCm ? String(current.thighCm) : "",
     inseamCm: current?.inseamCm ? String(current.inseamCm) : "",
+    forearmCm: current?.forearmCm ? String(current.forearmCm) : "",
+    calfCm: current?.calfCm ? String(current.calfCm) : "",
+    neckCm: current?.neckCm ? String(current.neckCm) : "",
+    shoulderSlopeDeg: current?.shoulderSlopeDeg !== undefined ? String(current.shoulderSlopeDeg) : "",
   });
   const [files, setFiles] = useState<Partial<Record<BodyViewId, File>>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -80,6 +84,18 @@ export default function BodyPage() {
       inseamCm: measurements.inseamCm
         ? Number(measurements.inseamCm)
         : undefined,
+      forearmCm: measurements.forearmCm
+        ? Number(measurements.forearmCm)
+        : undefined,
+      calfCm: measurements.calfCm
+        ? Number(measurements.calfCm)
+        : undefined,
+      neckCm: measurements.neckCm
+        ? Number(measurements.neckCm)
+        : undefined,
+      shoulderSlopeDeg: measurements.shoulderSlopeDeg
+        ? Number(measurements.shoulderSlopeDeg)
+        : undefined,
     };
 
     if (!validMeasurement(parsed.heightCm, 120, 230)) nextErrors.heightCm = "Informe uma altura entre 120 e 230 cm.";
@@ -100,6 +116,18 @@ export default function BodyPage() {
     }
     if (parsed.inseamCm !== undefined && !validMeasurement(parsed.inseamCm, 45, 110)) {
       nextErrors.inseamCm = "Informe a entreperna entre 45 e 110 cm.";
+    }
+    if (parsed.forearmCm !== undefined && !validMeasurement(parsed.forearmCm, 15, 55)) {
+      nextErrors.forearmCm = "Informe a circunferência do antebraço entre 15 e 55 cm.";
+    }
+    if (parsed.calfCm !== undefined && !validMeasurement(parsed.calfCm, 20, 70)) {
+      nextErrors.calfCm = "Informe a circunferência da panturrilha entre 20 e 70 cm.";
+    }
+    if (parsed.neckCm !== undefined && !validMeasurement(parsed.neckCm, 25, 65)) {
+      nextErrors.neckCm = "Informe a circunferência do pescoço entre 25 e 65 cm.";
+    }
+    if (parsed.shoulderSlopeDeg !== undefined && !validMeasurement(parsed.shoulderSlopeDeg, 0, 25)) {
+      nextErrors.shoulderSlopeDeg = "Informe uma inclinação entre 0° e 25°.";
     }
 
     for (const view of CAPTURE_VIEWS) {
@@ -319,7 +347,7 @@ export default function BodyPage() {
             <div>
               <h2 className="text-lg font-bold">Medidas anatômicas avançadas</h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-                Opcionais, mas recomendadas. Elas substituem proporções médias na posição dos ombros, comprimento e espessura dos braços, coxas e pernas.
+                Opcionais, mas recomendadas. Elas substituem proporções médias na posição dos ombros, comprimento e espessura dos braços, antebraços, pescoço, coxas, panturrilhas e pernas.
               </p>
             </div>
             <span className="rounded-full bg-[var(--thread-soft)] px-3 py-1 text-xs font-semibold text-[var(--thread)]">
@@ -327,13 +355,17 @@ export default function BodyPage() {
             </span>
           </div>
 
-          <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {[
               ["shoulderWidthCm", "Ombro a ombro", "cm"],
               ["armLengthCm", "Comprimento do braço", "cm"],
               ["upperArmCm", "Circ. braço", "cm"],
               ["thighCm", "Circ. coxa", "cm"],
               ["inseamCm", "Entreperna", "cm"],
+              ["forearmCm", "Circ. antebraço", "cm"],
+              ["calfCm", "Circ. panturrilha", "cm"],
+              ["neckCm", "Circ. pescoço", "cm"],
+              ["shoulderSlopeDeg", "Inclinação do ombro", "°"],
             ].map(([key, label, unit]) => (
               <div key={key}>
                 <label htmlFor={key} className="text-sm font-semibold">{label}</label>
@@ -398,8 +430,10 @@ export default function BodyPage() {
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
-              {calibration.version === 10
-                ? "Scanner bundle v10 pronto"
+              {calibration.version === 11
+                ? "Scanner denso v11 pronto"
+                : calibration.version === 10
+                  ? "Scanner bundle v10 pronto"
                 : calibration.version === 9
                   ? "Scanner robusto v9 pronto"
                 : calibration.version === 8
@@ -415,8 +449,10 @@ export default function BodyPage() {
                   : "BodyMesh anatômico pronto"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 10 && mvs
-                ? `MVS v10 ativo: bundle da turntable com ângulo por frame/eixo inclinado, pirâmide multi-resolução e reduções WASM SIMD quando suportadas. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
+              {calibration.version === 11 && mvs
+                ? `MVS v11 ativo: bundle com residual de bordas da imagem, rejeição robusta de frames, depth edge-aware densificado e hot paths SIMD ativados apenas quando o benchmark local vence o JS. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras válidas; ${mvs.turntableRig?.rejectedViews?.length ?? 0} frame(s) rejeitado(s); o SDF continua sendo o envelope físico conservador.`
+                : calibration.version === 10 && mvs
+                  ? `MVS v10 ativo: bundle da turntable com ângulo por frame/eixo inclinado, pirâmide multi-resolução e reduções WASM SIMD quando suportadas. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
                 : calibration.version === 9 && mvs
                   ? `MVS robusto ativo: ZNCC + Census + gradiente, busca coarse-to-fine e profundidade subpixel. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram aos filtros; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
                 : calibration.version === 8 && mvs
@@ -500,8 +536,8 @@ export default function BodyPage() {
               <div>
                 <dt className="text-xs font-semibold text-white/55">Bundle turntable</dt>
                 <dd className="mt-1 text-sm font-bold tabular-nums">
-                  {mvs?.turntableRig?.version === 2
-                    ? `${(mvs.turntableRig.axisTiltDeg ?? 0).toFixed(2)}° tilt · ${(mvs.turntableRig.bundleResidualCm ?? 0).toFixed(2)} cm RMS`
+                  {mvs?.turntableRig?.version && mvs.turntableRig.version >= 2
+                    ? `${(mvs.turntableRig.axisTiltDeg ?? 0).toFixed(2)}° tilt · ${(mvs.turntableRig.bundleResidualCm ?? 0).toFixed(2)} cm RMS${mvs.turntableRig.version >= 3 ? ` · ${mvs.turntableRig.rejectedViews?.length ?? 0} rej.` : ""}`
                     : "—"}
                 </dd>
               </div>
@@ -606,8 +642,10 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 10
-                  ? "Bundle angular/tilt, pirâmide multi-resolução, SIMD numérico e TSDF concluídos no Worker quando disponível."
+                {calibration.version === 11
+                  ? "Bundle por features validado, frames ruins filtrados, depth edge-aware e TSDF concluídos; SIMD só é ativado quando o benchmark local justifica."
+                  : calibration.version === 10
+                    ? "Bundle angular/tilt, pirâmide multi-resolução, SIMD numérico e TSDF concluídos no Worker quando disponível."
                   : calibration.version === 9
                     ? "MVS robusto, subpixel, eixo compartilhado e TSDF concluídos fora da UI quando Worker está disponível."
                   : calibration.version === 8

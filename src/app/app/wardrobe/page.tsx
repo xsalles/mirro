@@ -14,26 +14,69 @@ import {
 } from "@/lib/mirro/fabric-library";
 import { defaultFabricPhysicalProfile } from "@/lib/mirro/garment-mesh";
 import { removeFlatBackground } from "@/lib/mirro/image-processing";
-import type { FabricWeight, Garment, GarmentCategory, MediaRef, StretchLevel } from "@/lib/mirro/types";
+import type {
+  FabricWeight,
+  Garment,
+  GarmentCategory,
+  MediaRef,
+  SleeveLength,
+  StretchLevel,
+} from "@/lib/mirro/types";
 import { validateImage } from "@/lib/mirro/validation";
 
 const CATEGORY_LABELS: Record<GarmentCategory, string> = {
   top: "Camiseta",
   shirt: "Camisa",
   hoodie: "Moletom",
+  jacket: "Jaqueta",
+  dress: "Vestido",
+  skirt: "Saia",
   pants: "Calça",
   shorts: "Shorts",
 };
+
+const SLEEVE_LABELS: Record<SleeveLength, string> = {
+  sleeveless: "Sem manga",
+  short: "Manga curta",
+  "three-quarter": "Manga 3/4",
+  long: "Manga longa",
+};
+
+function supportsSleeves(category: GarmentCategory) {
+  return [
+    "top",
+    "shirt",
+    "hoodie",
+    "jacket",
+    "dress",
+  ].includes(category);
+}
+
+function defaultSleeve(category: GarmentCategory): SleeveLength {
+  if (category === "hoodie" || category === "jacket") {
+    return "long";
+  }
+  if (category === "shirt") {
+    return "three-quarter";
+  }
+  return "short";
+}
 
 export default function WardrobePage() {
   const { state, addGarment, removeGarment } = useMirro();
   const [form, setForm] = useState({
     name: "",
     category: "top" as GarmentCategory,
+    sleeveLength: "short" as SleeveLength,
     size: "M",
     fabricWeight: "medium" as FabricWeight,
     stretch: "low" as StretchLevel,
     fabricLibraryId: "",
+    fabricSource: "engineering-preset" as
+      | "engineering-preset"
+      | "lab-sheet",
+    fabricReference: "",
+    fabricTestedAt: "",
   });
   const [physics, setPhysics] = useState(() => {
     const profile = defaultFabricPhysicalProfile("medium", "low");
@@ -75,6 +118,13 @@ export default function WardrobePage() {
     if (physicalProfile.stretchWeftPct < 0 || physicalProfile.stretchWeftPct > 45) nextErrors.stretchWeftPct = "Use stretch de trama entre 0 e 45%.";
     if (physicalProfile.bendStiffness < 0 || physicalProfile.bendStiffness > 100) nextErrors.bendStiffness = "Use rigidez entre 0 e 100.";
     if (physicalProfile.friction < 0.02 || physicalProfile.friction > 0.8) nextErrors.friction = "Use atrito entre 0,02 e 0,8.";
+    if (
+      form.fabricSource === "lab-sheet" &&
+      form.fabricReference.trim().length < 3
+    ) {
+      nextErrors.fabricReference =
+        "Informe a referência da ficha técnica ou ensaio que sustenta estes valores.";
+    }
 
     if (!front) nextErrors.front = "Adicione a foto da frente.";
     if (!back) nextErrors.back = "Adicione a foto das costas.";
@@ -101,14 +151,38 @@ export default function WardrobePage() {
         type: "image/png",
         size: backBlob.size,
       };
+      const selectedFabric = getFabricLibraryEntry(
+        form.fabricLibraryId,
+      );
       const garment: Garment = {
         id,
-        ...form,
         name: form.name.trim(),
+        category: form.category,
+        sleeveLength: supportsSleeves(form.category)
+          ? form.sleeveLength
+          : undefined,
+        size: form.size,
+        fabricWeight: form.fabricWeight,
+        stretch: form.stretch,
         images: { front: frontRef, back: backRef },
         calibration,
         physicalProfile,
         fabricLibraryId: form.fabricLibraryId || undefined,
+        fabricEvidence:
+          form.fabricSource === "lab-sheet"
+            ? {
+                source: "lab-sheet",
+                reference:
+                  form.fabricReference.trim(),
+                testedAt:
+                  form.fabricTestedAt ||
+                  undefined,
+              }
+            : selectedFabric?.evidence ?? {
+                source: "engineering-preset",
+                reference:
+                  selectedFabric?.id,
+              },
         createdAt: new Date().toISOString(),
       };
       await addGarment(garment, [
@@ -158,7 +232,23 @@ export default function WardrobePage() {
 
               <div>
                 <label htmlFor="category" className="text-sm font-semibold">Categoria</label>
-                <select id="category" className="mt-2" value={form.category} onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value as GarmentCategory }))}>
+                <select
+                  id="category"
+                  className="mt-2"
+                  value={form.category}
+                  onChange={(e) => {
+                    const category =
+                      e.target.value as GarmentCategory;
+                    setForm((prev) => ({
+                      ...prev,
+                      category,
+                      sleeveLength:
+                        supportsSleeves(category)
+                          ? defaultSleeve(category)
+                          : prev.sleeveLength,
+                    }));
+                  }}
+                >
                   {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </div>
@@ -167,6 +257,34 @@ export default function WardrobePage() {
                 <label htmlFor="size" className="text-sm font-semibold">Tamanho</label>
                 <input id="size" className="mt-2" type="text" maxLength={10} value={form.size} onChange={(e) => setForm((prev) => ({ ...prev, size: e.target.value }))} />
               </div>
+
+              {supportsSleeves(form.category) ? (
+                <div className="sm:col-span-2">
+                  <label htmlFor="sleeveLength" className="text-sm font-semibold">
+                    Comprimento da manga
+                  </label>
+                  <select
+                    id="sleeveLength"
+                    className="mt-2"
+                    value={form.sleeveLength}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        sleeveLength:
+                          e.target.value as SleeveLength,
+                      }))
+                    }
+                  >
+                    {Object.entries(SLEEVE_LABELS).map(
+                      ([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </div>
+              ) : null}
 
               <div className="sm:col-span-2">
                 <label htmlFor="fabricLibraryId" className="text-sm font-semibold">
@@ -179,7 +297,15 @@ export default function WardrobePage() {
                   onChange={(e) => {
                     const fabricLibraryId = e.target.value;
                     const entry = getFabricLibraryEntry(fabricLibraryId);
-                    setForm((prev) => ({ ...prev, fabricLibraryId }));
+                    setForm((prev) => ({
+                      ...prev,
+                      fabricLibraryId,
+                      fabricSource: entry
+                        ? entry.source
+                        : prev.fabricSource,
+                      fabricReference: "",
+                      fabricTestedAt: "",
+                    }));
                     if (entry) setPhysics(fabricProfileToForm(entry.profile));
                   }}
                 >
@@ -286,6 +412,96 @@ export default function WardrobePage() {
             <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">XPBD anisotrópico</span>
           </div>
 
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div>
+              <label htmlFor="fabricSource" className="text-xs font-semibold">
+                Origem dos parâmetros
+              </label>
+              <select
+                id="fabricSource"
+                className="mt-2"
+                value={form.fabricSource}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    fabricSource: e.target.value as
+                      | "engineering-preset"
+                      | "lab-sheet",
+                    fabricLibraryId:
+                      e.target.value === "lab-sheet"
+                        ? ""
+                        : prev.fabricLibraryId,
+                  }))
+                }
+              >
+                <option value="engineering-preset">
+                  Estimativa / preset de engenharia
+                </option>
+                <option value="lab-sheet">
+                  Ficha técnica ou ensaio medido
+                </option>
+              </select>
+            </div>
+
+            {form.fabricSource === "lab-sheet" ? (
+              <>
+                <div>
+                  <label htmlFor="fabricReference" className="text-xs font-semibold">
+                    Referência da ficha/ensaio
+                  </label>
+                  <input
+                    id="fabricReference"
+                    className="mt-2"
+                    type="text"
+                    value={form.fabricReference}
+                    aria-invalid={Boolean(errors.fabricReference)}
+                    aria-describedby={
+                      errors.fabricReference
+                        ? "fabricReference-error"
+                        : undefined
+                    }
+                    placeholder="Ex.: relatório LAB-2026-041"
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        fabricReference: e.target.value,
+                      }))
+                    }
+                  />
+                  {errors.fabricReference ? (
+                    <p
+                      id="fabricReference-error"
+                      className="mt-1.5 text-xs leading-5 text-[var(--danger)]"
+                    >
+                      {errors.fabricReference}
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <label htmlFor="fabricTestedAt" className="text-xs font-semibold">
+                    Data do ensaio
+                  </label>
+                  <input
+                    id="fabricTestedAt"
+                    className="mt-2"
+                    type="date"
+                    value={form.fabricTestedAt}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        fabricTestedAt: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="self-end text-xs leading-5 text-[var(--muted)] sm:col-span-1 xl:col-span-2">
+                Presets continuam disponíveis, mas a MIRRO os identifica como estimativas. Valores de ficha técnica só recebem status medido quando você informa a referência.
+              </p>
+            )}
+          </div>
+
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
             {[
               ["densityGsm", "Gramatura", "g/m²", "40", "1000", "1"],
@@ -364,6 +580,15 @@ export default function WardrobePage() {
                     {garment.fabricLibraryId ? (
                       <p className="mt-1 text-xs font-semibold text-[var(--thread)]">
                         {getFabricLibraryEntry(garment.fabricLibraryId)?.name ?? "Tecido da biblioteca"}
+                      </p>
+                    ) : null}
+                    {garment.fabricEvidence?.source === "lab-sheet" ? (
+                      <p className="mt-1 text-xs font-semibold text-[var(--thread)]">
+                        parâmetros medidos · {garment.fabricEvidence.reference ?? "ficha técnica"}
+                      </p>
+                    ) : garment.physicalProfile ? (
+                      <p className="mt-1 text-xs font-semibold text-[var(--muted)]">
+                        parâmetros estimados / ajustados
                       </p>
                     ) : null}
                     {garment.physicalProfile ? (

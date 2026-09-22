@@ -199,6 +199,10 @@ describe("buildBodyCalibration", () => {
       upperArmCm: 32,
       thighCm: 58,
       inseamCm: 82,
+      forearmCm: 27,
+      calfCm: 38,
+      neckCm: 39,
+      shoulderSlopeDeg: 9,
     };
 
     const metricCalibration = buildBodyCalibration(
@@ -242,6 +246,22 @@ describe("buildBodyCalibration", () => {
       ),
     ).toBeCloseTo(62, 0);
     expect(leftLeg.startRadius).toBeCloseTo(58 / (Math.PI * 2), 1);
+    expect(leftArm.endRadius).toBeCloseTo(
+      (27 / (Math.PI * 2)) * 0.78,
+      1,
+    );
+    expect(leftLeg.endRadius).toBeCloseTo(
+      (38 / (Math.PI * 2)) * 0.62,
+      1,
+    );
+    expect(
+      metricCalibration.mesh.semanticMeasurements,
+    ).toMatchObject({
+      shoulderSlopeDeg: 9,
+    });
+    expect(
+      metricCalibration.mesh.semanticMeasurements?.neckRadiusCm ?? 0,
+    ).toBeCloseTo(39 / (Math.PI * 2), 1);
   });
 
   it("builds an asymmetric metric BodyMesh v4 from lateral contour centers", () => {

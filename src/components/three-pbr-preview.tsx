@@ -180,6 +180,7 @@ export function ThreePbrPreview({
             urls: bodyTextureUrls,
             silhouettes: bodyCalibration.silhouettes,
             textureCalibration: bodyCalibration.textureCalibration,
+            cameraRig: bodyCalibration.cameraRig,
           });
           if (disposed) return;
           const atlasTexture = new THREE.CanvasTexture(atlas);

@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MediaImage } from "@/components/media-image";
 import { useMirro } from "@/components/mirro-provider";
 import { calibrateGarmentFromProcessedImages } from "@/lib/mirro/garment-image-processing";
+import { defaultFabricPhysicalProfile } from "@/lib/mirro/garment-mesh";
 import { removeFlatBackground } from "@/lib/mirro/image-processing";
 import type { FabricWeight, Garment, GarmentCategory, MediaRef, StretchLevel } from "@/lib/mirro/types";
 import { validateImage } from "@/lib/mirro/validation";
@@ -28,6 +29,12 @@ export default function WardrobePage() {
     fabricWeight: "medium" as FabricWeight,
     stretch: "low" as StretchLevel,
   });
+  const [physics, setPhysics] = useState(() => {
+    const profile = defaultFabricPhysicalProfile("medium", "low");
+    return Object.fromEntries(
+      Object.entries(profile).map(([key, value]) => [key, String(value)]),
+    ) as Record<keyof typeof profile, string>;
+  });
   const [front, setFront] = useState<File | null>(null);
   const [back, setBack] = useState<File | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -47,6 +54,22 @@ export default function WardrobePage() {
     event.preventDefault();
     const nextErrors: Record<string, string> = {};
     if (form.name.trim().length < 2) nextErrors.name = "Dê um nome para identificar a peça.";
+
+    const physicalProfile = {
+      densityGsm: Number(physics.densityGsm),
+      thicknessMm: Number(physics.thicknessMm),
+      stretchWarpPct: Number(physics.stretchWarpPct),
+      stretchWeftPct: Number(physics.stretchWeftPct),
+      bendStiffness: Number(physics.bendStiffness),
+      friction: Number(physics.friction),
+    };
+    if (physicalProfile.densityGsm < 40 || physicalProfile.densityGsm > 1000) nextErrors.densityGsm = "Use um peso entre 40 e 1000 g/m².";
+    if (physicalProfile.thicknessMm < 0.1 || physicalProfile.thicknessMm > 5) nextErrors.thicknessMm = "Use uma espessura entre 0,1 e 5 mm.";
+    if (physicalProfile.stretchWarpPct < 0 || physicalProfile.stretchWarpPct > 45) nextErrors.stretchWarpPct = "Use stretch de urdume entre 0 e 45%.";
+    if (physicalProfile.stretchWeftPct < 0 || physicalProfile.stretchWeftPct > 45) nextErrors.stretchWeftPct = "Use stretch de trama entre 0 e 45%.";
+    if (physicalProfile.bendStiffness < 0 || physicalProfile.bendStiffness > 100) nextErrors.bendStiffness = "Use rigidez entre 0 e 100.";
+    if (physicalProfile.friction < 0.02 || physicalProfile.friction > 0.8) nextErrors.friction = "Use atrito entre 0,02 e 0,8.";
+
     if (!front) nextErrors.front = "Adicione a foto da frente.";
     if (!back) nextErrors.back = "Adicione a foto das costas.";
     setErrors(nextErrors);
@@ -78,6 +101,7 @@ export default function WardrobePage() {
         name: form.name.trim(),
         images: { front: frontRef, back: backRef },
         calibration,
+        physicalProfile,
         createdAt: new Date().toISOString(),
       };
       await addGarment(garment, [
@@ -139,7 +163,17 @@ export default function WardrobePage() {
 
               <div>
                 <label htmlFor="fabricWeight" className="text-sm font-semibold">Peso do tecido</label>
-                <select id="fabricWeight" className="mt-2" value={form.fabricWeight} onChange={(e) => setForm((prev) => ({ ...prev, fabricWeight: e.target.value as FabricWeight }))}>
+                <select
+                  id="fabricWeight"
+                  className="mt-2"
+                  value={form.fabricWeight}
+                  onChange={(e) => {
+                    const fabricWeight = e.target.value as FabricWeight;
+                    setForm((prev) => ({ ...prev, fabricWeight }));
+                    const preset = defaultFabricPhysicalProfile(fabricWeight, form.stretch);
+                    setPhysics(Object.fromEntries(Object.entries(preset).map(([key, value]) => [key, String(value)])) as typeof physics);
+                  }}
+                >
                   <option value="light">Leve</option>
                   <option value="medium">Médio</option>
                   <option value="heavy">Pesado</option>
@@ -148,7 +182,17 @@ export default function WardrobePage() {
 
               <div>
                 <label htmlFor="stretch" className="text-sm font-semibold">Elasticidade</label>
-                <select id="stretch" className="mt-2" value={form.stretch} onChange={(e) => setForm((prev) => ({ ...prev, stretch: e.target.value as StretchLevel }))}>
+                <select
+                  id="stretch"
+                  className="mt-2"
+                  value={form.stretch}
+                  onChange={(e) => {
+                    const stretch = e.target.value as StretchLevel;
+                    setForm((prev) => ({ ...prev, stretch }));
+                    const preset = defaultFabricPhysicalProfile(form.fabricWeight, stretch);
+                    setPhysics(Object.fromEntries(Object.entries(preset).map(([key, value]) => [key, String(value)])) as typeof physics);
+                  }}
+                >
                   <option value="none">Nenhuma</option>
                   <option value="low">Pouca</option>
                   <option value="medium">Média</option>
@@ -187,6 +231,53 @@ export default function WardrobePage() {
           </div>
         </div>
 
+        <section className="mt-6 rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)]/45 p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-bold">Física do tecido</h3>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
+                Os presets acima preenchem estes valores. Se você souber a composição ou ficha técnica da peça, ajuste aqui para o XPBD usar massa, espessura, elasticidade por eixo, dobra e atrito mais próximos do tecido real.
+              </p>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">XPBD anisotrópico</span>
+          </div>
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+            {[
+              ["densityGsm", "Gramatura", "g/m²", "40", "1000", "1"],
+              ["thicknessMm", "Espessura", "mm", "0.1", "5", "0.05"],
+              ["stretchWarpPct", "Stretch urdume", "%", "0", "45", "1"],
+              ["stretchWeftPct", "Stretch trama", "%", "0", "45", "1"],
+              ["bendStiffness", "Rigidez dobra", "/100", "0", "100", "1"],
+              ["friction", "Atrito", "", "0.02", "0.8", "0.01"],
+            ].map(([key, label, unit, min, max, step]) => (
+              <div key={key}>
+                <label htmlFor={key} className="text-xs font-semibold">{label}</label>
+                <div className="relative mt-2">
+                  <input
+                    id={key}
+                    type="number"
+                    inputMode="decimal"
+                    min={min}
+                    max={max}
+                    step={step}
+                    value={physics[key as keyof typeof physics]}
+                    aria-invalid={Boolean(errors[key])}
+                    aria-describedby={errors[key] ? `${key}-error` : undefined}
+                    onChange={(e) => setPhysics((prev) => ({ ...prev, [key]: e.target.value }))}
+                  />
+                  {unit ? (
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-[var(--muted)]">
+                      {unit}
+                    </span>
+                  ) : null}
+                </div>
+                {errors[key] ? <p id={`${key}-error`} className="mt-1.5 text-xs leading-5 text-[var(--danger)]">{errors[key]}</p> : null}
+              </div>
+            ))}
+          </div>
+        </section>
+
         {errors.form ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-[var(--danger)]">{errors.form}</p> : null}
         <div className="mt-6">
           <Button type="submit" disabled={saving}>
@@ -221,6 +312,11 @@ export default function WardrobePage() {
                     {garment.calibration ? (
                       <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
                         forma calibrada · {Math.round(garment.calibration.quality.score * 100)}%
+                      </p>
+                    ) : null}
+                    {garment.physicalProfile ? (
+                      <p className="mt-1 text-xs text-[var(--muted)]">
+                        {garment.physicalProfile.densityGsm} g/m² · {garment.physicalProfile.thicknessMm} mm · {garment.physicalProfile.stretchWarpPct}/{garment.physicalProfile.stretchWeftPct}% stretch
                       </p>
                     ) : null}
                   </div>

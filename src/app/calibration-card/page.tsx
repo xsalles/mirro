@@ -20,7 +20,7 @@ export default function CalibrationCardPage() {
             Cartão métrico MIRRO
           </h1>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-            Imprima em A4, escala 100%, sem “ajustar à página”. Nas quatro fotos do corpo, deixe o cartão inteiro visível e no mesmo plano do corpo.
+            Imprima em A4, escala 100%, sem “ajustar à página”. Deixe o cartão inteiro visível e na mesma profundidade do corpo; varie levemente a inclinação e a posição entre as quatro vistas para melhorar a calibração óptica.
           </p>
         </div>
         <div className="flex gap-2">
@@ -72,7 +72,7 @@ export default function CalibrationCardPage() {
           <div className="border-y border-black/15 py-[7mm]">
             <p className="text-[11pt] font-bold">Mantenha este cartão no mesmo plano do corpo</p>
             <p className="mx-auto mt-[3mm] max-w-[112mm] text-[8pt] leading-[1.55] text-black/65">
-              Não dobre. Não cubra os quatro quadrados. Evite reflexos. Use a mesma distância e altura de câmera nas vistas frente, direita, costas e esquerda.
+              Não dobre. Não cubra os quatro quadrados. Evite reflexos. Mantenha a câmera na mesma distância/altura e desloque ou incline o cartão levemente entre as vistas, sem trazê-lo para mais perto ou mais longe do corpo.
             </p>
           </div>
         </div>

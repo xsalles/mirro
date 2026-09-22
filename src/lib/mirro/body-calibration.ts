@@ -2,6 +2,7 @@ import type {
   BodyCalibration,
   BodyMeasurements,
   BodyMesh,
+  BodyPartKind,
   BodySide,
   BodySilhouette,
 } from "./types";
@@ -437,56 +438,35 @@ function addFaceNormal(
   }
 }
 
-function buildMesh(
-  radiusX: number[],
-  radiusZ: number[],
-  heightCm: number,
-  landmarks: BodyMesh["landmarks"],
-  segmentsPerRing = DEFAULT_RING_SEGMENTS,
-): BodyMesh {
-  const ringCount = radiusX.length;
-  const vertices: number[] = [];
-  const normals: number[] = [];
-  const indices: number[] = [];
+type Vec3 = [number, number, number];
 
-  for (let ring = 0; ring < ringCount; ring += 1) {
-    const t = ringCount === 1 ? 0 : ring / (ringCount - 1);
-    const y = heightCm / 2 - t * heightCm;
-    const rx = Math.max(0.65, radiusX[ring]);
-    const rz = Math.max(0.65, radiusZ[ring]);
+function vecSub(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
 
-    for (let segment = 0; segment < segmentsPerRing; segment += 1) {
-      const angle = (segment / segmentsPerRing) * Math.PI * 2;
-      vertices.push(Math.cos(angle) * rx, y, Math.sin(angle) * rz);
-      normals.push(0, 0, 0);
-    }
-  }
+function vecLength(v: Vec3) {
+  return Math.hypot(v[0], v[1], v[2]);
+}
 
-  for (let ring = 0; ring < ringCount - 1; ring += 1) {
-    for (let segment = 0; segment < segmentsPerRing; segment += 1) {
-      const nextSegment = (segment + 1) % segmentsPerRing;
-      const a = ring * segmentsPerRing + segment;
-      const d = ring * segmentsPerRing + nextSegment;
-      const b = (ring + 1) * segmentsPerRing + segment;
-      const c = (ring + 1) * segmentsPerRing + nextSegment;
-      indices.push(a, d, b, d, c, b);
-    }
-  }
+function vecNormalize(v: Vec3): Vec3 {
+  const length = vecLength(v) || 1;
+  return [v[0] / length, v[1] / length, v[2] / length];
+}
 
-  const topCenter = vertices.length / 3;
-  vertices.push(0, heightCm / 2, 0);
-  normals.push(0, 0, 0);
-  const bottomCenter = vertices.length / 3;
-  vertices.push(0, -heightCm / 2, 0);
-  normals.push(0, 0, 0);
+function vecCross(a: Vec3, b: Vec3): Vec3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
 
-  for (let segment = 0; segment < segmentsPerRing; segment += 1) {
-    const next = (segment + 1) % segmentsPerRing;
-    indices.push(topCenter, next, segment);
-    const bottomStart = (ringCount - 1) * segmentsPerRing;
-    indices.push(bottomCenter, bottomStart + segment, bottomStart + next);
-  }
+function bodyY(heightCm: number, ring: number, ringCount: number) {
+  const t = clamp(ring, 0, ringCount - 1) / Math.max(1, ringCount - 1);
+  return heightCm / 2 - t * heightCm;
+}
 
+function finalizeNormals(vertices: number[], normals: number[], indices: number[]) {
   for (let offset = 0; offset < indices.length; offset += 3) {
     addFaceNormal(vertices, normals, indices[offset], indices[offset + 1], indices[offset + 2]);
   }
@@ -500,9 +480,451 @@ function buildMesh(
     normals[index + 1] = ny / length;
     normals[index + 2] = nz / length;
   }
+}
+
+function appendEllipticalTorso(params: {
+  vertices: number[];
+  normals: number[];
+  indices: number[];
+  radiusX: number[];
+  radiusZ: number[];
+  heightCm: number;
+  startRing: number;
+  endRing: number;
+  segments: number;
+}) {
+  const {
+    vertices,
+    normals,
+    indices,
+    radiusX,
+    radiusZ,
+    heightCm,
+    startRing,
+    endRing,
+    segments,
+  } = params;
+  const vertexStart = vertices.length / 3;
+  const indexStart = indices.length;
+  const sourceRingCount = radiusX.length;
+  const localRingCount = endRing - startRing + 1;
+
+  for (let localRing = 0; localRing < localRingCount; localRing += 1) {
+    const sourceRing = startRing + localRing;
+    const y = bodyY(heightCm, sourceRing, sourceRingCount);
+    const rx = Math.max(0.65, radiusX[sourceRing]);
+    const rz = Math.max(0.65, radiusZ[sourceRing]);
+
+    for (let segment = 0; segment < segments; segment += 1) {
+      const angle = (segment / segments) * Math.PI * 2;
+      vertices.push(Math.cos(angle) * rx, y, Math.sin(angle) * rz);
+      normals.push(0, 0, 0);
+    }
+  }
+
+  for (let ring = 0; ring < localRingCount - 1; ring += 1) {
+    for (let segment = 0; segment < segments; segment += 1) {
+      const next = (segment + 1) % segments;
+      const a = vertexStart + ring * segments + segment;
+      const d = vertexStart + ring * segments + next;
+      const b = vertexStart + (ring + 1) * segments + segment;
+      const cc = vertexStart + (ring + 1) * segments + next;
+      indices.push(a, d, b, d, cc, b);
+    }
+  }
+
+  const topCenter = vertices.length / 3;
+  vertices.push(0, bodyY(heightCm, startRing, sourceRingCount), 0);
+  normals.push(0, 0, 0);
+  const bottomCenter = vertices.length / 3;
+  vertices.push(0, bodyY(heightCm, endRing, sourceRingCount), 0);
+  normals.push(0, 0, 0);
+
+  for (let segment = 0; segment < segments; segment += 1) {
+    const next = (segment + 1) % segments;
+    indices.push(topCenter, vertexStart + next, vertexStart + segment);
+    const bottomStart = vertexStart + (localRingCount - 1) * segments;
+    indices.push(bottomCenter, bottomStart + segment, bottomStart + next);
+  }
 
   return {
-    version: 1,
+    vertexStart,
+    vertexCount: vertices.length / 3 - vertexStart,
+    indexStart,
+    indexCount: indices.length - indexStart,
+  };
+}
+
+function appendEllipsoid(params: {
+  vertices: number[];
+  normals: number[];
+  indices: number[];
+  center: Vec3;
+  radii: Vec3;
+  latSegments?: number;
+  lonSegments?: number;
+}) {
+  const {
+    vertices,
+    normals,
+    indices,
+    center,
+    radii,
+    latSegments = 12,
+    lonSegments = 18,
+  } = params;
+  const vertexStart = vertices.length / 3;
+  const indexStart = indices.length;
+
+  for (let lat = 0; lat <= latSegments; lat += 1) {
+    const v = lat / latSegments;
+    const phi = v * Math.PI;
+    const sinPhi = Math.sin(phi);
+    const cosPhi = Math.cos(phi);
+
+    for (let lon = 0; lon <= lonSegments; lon += 1) {
+      const u = lon / lonSegments;
+      const theta = u * Math.PI * 2;
+      vertices.push(
+        center[0] + Math.cos(theta) * sinPhi * radii[0],
+        center[1] + cosPhi * radii[1],
+        center[2] + Math.sin(theta) * sinPhi * radii[2],
+      );
+      normals.push(0, 0, 0);
+    }
+  }
+
+  const stride = lonSegments + 1;
+  for (let lat = 0; lat < latSegments; lat += 1) {
+    for (let lon = 0; lon < lonSegments; lon += 1) {
+      const a = vertexStart + lat * stride + lon;
+      const b = a + stride;
+      const d = a + 1;
+      const cc = b + 1;
+      if (lat > 0) indices.push(a, d, b);
+      if (lat < latSegments - 1) indices.push(d, cc, b);
+    }
+  }
+
+  return {
+    vertexStart,
+    vertexCount: vertices.length / 3 - vertexStart,
+    indexStart,
+    indexCount: indices.length - indexStart,
+  };
+}
+
+function appendTaperedLimb(params: {
+  vertices: number[];
+  normals: number[];
+  indices: number[];
+  start: Vec3;
+  end: Vec3;
+  startRadius: number;
+  endRadius: number;
+  rings?: number;
+  segments?: number;
+}) {
+  const {
+    vertices,
+    normals,
+    indices,
+    start,
+    end,
+    startRadius,
+    endRadius,
+    rings = 9,
+    segments = 14,
+  } = params;
+  const vertexStart = vertices.length / 3;
+  const indexStart = indices.length;
+  const axis = vecNormalize(vecSub(end, start));
+  const helper: Vec3 = Math.abs(axis[1]) < 0.88 ? [0, 1, 0] : [0, 0, 1];
+  const basisA = vecNormalize(vecCross(axis, helper));
+  const basisB = vecNormalize(vecCross(axis, basisA));
+
+  for (let ring = 0; ring <= rings; ring += 1) {
+    const t = ring / rings;
+    const center: Vec3 = [
+      start[0] + (end[0] - start[0]) * t,
+      start[1] + (end[1] - start[1]) * t,
+      start[2] + (end[2] - start[2]) * t,
+    ];
+    const radius = startRadius + (endRadius - startRadius) * t;
+
+    for (let segment = 0; segment < segments; segment += 1) {
+      const angle = (segment / segments) * Math.PI * 2;
+      const ca = Math.cos(angle) * radius;
+      const sb = Math.sin(angle) * radius;
+      vertices.push(
+        center[0] + basisA[0] * ca + basisB[0] * sb,
+        center[1] + basisA[1] * ca + basisB[1] * sb,
+        center[2] + basisA[2] * ca + basisB[2] * sb,
+      );
+      normals.push(0, 0, 0);
+    }
+  }
+
+  for (let ring = 0; ring < rings; ring += 1) {
+    for (let segment = 0; segment < segments; segment += 1) {
+      const next = (segment + 1) % segments;
+      const a = vertexStart + ring * segments + segment;
+      const d = vertexStart + ring * segments + next;
+      const b = vertexStart + (ring + 1) * segments + segment;
+      const cc = vertexStart + (ring + 1) * segments + next;
+      indices.push(a, d, b, d, cc, b);
+    }
+  }
+
+  const startCenter = vertices.length / 3;
+  vertices.push(...start);
+  normals.push(0, 0, 0);
+  const endCenter = vertices.length / 3;
+  vertices.push(...end);
+  normals.push(0, 0, 0);
+
+  for (let segment = 0; segment < segments; segment += 1) {
+    const next = (segment + 1) % segments;
+    indices.push(startCenter, vertexStart + segment, vertexStart + next);
+    const endStart = vertexStart + rings * segments;
+    indices.push(endCenter, endStart + next, endStart + segment);
+  }
+
+  return {
+    vertexStart,
+    vertexCount: vertices.length / 3 - vertexStart,
+    indexStart,
+    indexCount: indices.length - indexStart,
+  };
+}
+
+function partBounds(vertices: number[], vertexStart: number, vertexCount: number) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let index = vertexStart; index < vertexStart + vertexCount; index += 1) {
+    const offset = index * 3;
+    minX = Math.min(minX, vertices[offset]);
+    minY = Math.min(minY, vertices[offset + 1]);
+    minZ = Math.min(minZ, vertices[offset + 2]);
+    maxX = Math.max(maxX, vertices[offset]);
+    maxY = Math.max(maxY, vertices[offset + 1]);
+    maxZ = Math.max(maxZ, vertices[offset + 2]);
+  }
+
+  return {
+    centerCm: [
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+    ] as Vec3,
+    boundsCm: {
+      width: maxX - minX,
+      height: maxY - minY,
+      depth: maxZ - minZ,
+    },
+  };
+}
+
+function buildAnatomicalMesh(
+  radiusX: number[],
+  radiusZ: number[],
+  heightCm: number,
+  landmarks: BodyMesh["landmarks"],
+  segmentsPerRing = DEFAULT_RING_SEGMENTS,
+): BodyMesh {
+  const vertices: number[] = [];
+  const normals: number[] = [];
+  const indices: number[] = [];
+  const parts: NonNullable<BodyMesh["parts"]> = [];
+  const collisionPrimitives: NonNullable<BodyMesh["collisionPrimitives"]> = [];
+  const ringCount = radiusX.length;
+  const torsoTopRing = clamp(
+    landmarks.shoulderRing ?? Math.round(ringCount * 0.17),
+    1,
+    ringCount - 4,
+  );
+  const torsoBottomRing = clamp(
+    landmarks.crotchRing ?? Math.round(ringCount * 0.63),
+    torsoTopRing + 3,
+    ringCount - 2,
+  );
+
+  const torsoRadiusX = [...radiusX];
+  const torsoRadiusZ = [...radiusZ];
+  const torsoWidthCap = Math.max(
+    radiusX[landmarks.chestRing] * 1.22,
+    radiusX[landmarks.hipsRing] * 1.14,
+  );
+
+  for (let ring = torsoTopRing; ring <= torsoBottomRing; ring += 1) {
+    torsoRadiusX[ring] = Math.min(torsoRadiusX[ring], torsoWidthCap);
+  }
+
+  const torsoGeometry = appendEllipticalTorso({
+    vertices,
+    normals,
+    indices,
+    radiusX: torsoRadiusX,
+    radiusZ: torsoRadiusZ,
+    heightCm,
+    startRing: torsoTopRing,
+    endRing: torsoBottomRing,
+    segments: segmentsPerRing,
+  });
+  const torsoMeta = partBounds(
+    vertices,
+    torsoGeometry.vertexStart,
+    torsoGeometry.vertexCount,
+  );
+  parts.push({
+    kind: "torso",
+    ...torsoGeometry,
+    ...torsoMeta,
+  });
+  collisionPrimitives.push({
+    type: "elliptical-hull",
+    part: "torso",
+    topY: bodyY(heightCm, torsoTopRing, ringCount),
+    bottomY: bodyY(heightCm, torsoBottomRing, ringCount),
+    radiusX: torsoRadiusX.slice(torsoTopRing, torsoBottomRing + 1),
+    radiusZ: torsoRadiusZ.slice(torsoTopRing, torsoBottomRing + 1),
+  });
+
+  const headRadii: Vec3 = [
+    heightCm * 0.045,
+    heightCm * 0.067,
+    heightCm * 0.054,
+  ];
+  const headCenter: Vec3 = [0, heightCm / 2 - headRadii[1], 0];
+  const headGeometry = appendEllipsoid({
+    vertices,
+    normals,
+    indices,
+    center: headCenter,
+    radii: headRadii,
+  });
+  parts.push({
+    kind: "head",
+    ...headGeometry,
+    ...partBounds(vertices, headGeometry.vertexStart, headGeometry.vertexCount),
+  });
+  collisionPrimitives.push({
+    type: "ellipsoid",
+    part: "head",
+    center: headCenter,
+    radii: headRadii,
+  });
+
+  const shoulderY = bodyY(heightCm, torsoTopRing + 2, ringCount);
+  const shoulderRadiusX = torsoRadiusX[Math.min(torsoBottomRing, torsoTopRing + 2)];
+  const armStartRadius = clamp(heightCm * 0.029, 4.2, 6.3);
+  const armEndRadius = clamp(heightCm * 0.019, 2.8, 4.3);
+  const wristY = bodyY(heightCm, Math.round(ringCount * 0.55), ringCount);
+
+  for (const side of [-1, 1] as const) {
+    const kind: BodyPartKind = side < 0 ? "left-arm" : "right-arm";
+    const startPoint: Vec3 = [
+      side * shoulderRadiusX * 0.9,
+      shoulderY,
+      0,
+    ];
+    const endPoint: Vec3 = [
+      side * (shoulderRadiusX * 1.08),
+      wristY,
+      heightCm * 0.006,
+    ];
+    const geometry = appendTaperedLimb({
+      vertices,
+      normals,
+      indices,
+      start: startPoint,
+      end: endPoint,
+      startRadius: armStartRadius,
+      endRadius: armEndRadius,
+    });
+    parts.push({
+      kind,
+      ...geometry,
+      ...partBounds(vertices, geometry.vertexStart, geometry.vertexCount),
+    });
+    collisionPrimitives.push({
+      type: "tapered-capsule",
+      part: kind,
+      start: startPoint,
+      end: endPoint,
+      startRadius: armStartRadius,
+      endRadius: armEndRadius,
+    });
+  }
+
+  const hipRadiusX = torsoRadiusX[landmarks.hipsRing];
+  const crotchY = bodyY(heightCm, torsoBottomRing, ringCount);
+  const ankleY = -heightCm / 2 + heightCm * 0.025;
+  const thighRadius = clamp(hipRadiusX * 0.4, 5.8, heightCm * 0.052);
+  const ankleRadius = clamp(heightCm * 0.023, 3.2, 4.8);
+
+  for (const side of [-1, 1] as const) {
+    const kind: BodyPartKind = side < 0 ? "left-leg" : "right-leg";
+    const startPoint: Vec3 = [
+      side * hipRadiusX * 0.43,
+      crotchY + thighRadius * 0.25,
+      0,
+    ];
+    const endPoint: Vec3 = [
+      side * hipRadiusX * 0.45,
+      ankleY,
+      0,
+    ];
+    const geometry = appendTaperedLimb({
+      vertices,
+      normals,
+      indices,
+      start: startPoint,
+      end: endPoint,
+      startRadius: thighRadius,
+      endRadius: ankleRadius,
+      rings: 12,
+      segments: 16,
+    });
+    parts.push({
+      kind,
+      ...geometry,
+      ...partBounds(vertices, geometry.vertexStart, geometry.vertexCount),
+    });
+    collisionPrimitives.push({
+      type: "tapered-capsule",
+      part: kind,
+      start: startPoint,
+      end: endPoint,
+      startRadius: thighRadius,
+      endRadius: ankleRadius,
+    });
+  }
+
+  finalizeNormals(vertices, normals, indices);
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let index = 0; index < vertices.length; index += 3) {
+    minX = Math.min(minX, vertices[index]);
+    minY = Math.min(minY, vertices[index + 1]);
+    minZ = Math.min(minZ, vertices[index + 2]);
+    maxX = Math.max(maxX, vertices[index]);
+    maxY = Math.max(maxY, vertices[index + 1]);
+    maxZ = Math.max(maxZ, vertices[index + 2]);
+  }
+
+  return {
+    version: 2,
     coordinateSystem: "x-right-y-up-z-front-centimeters",
     ringCount,
     segmentsPerRing,
@@ -510,10 +932,16 @@ function buildMesh(
     normals,
     indices,
     landmarks,
+    radiusXProfile: torsoRadiusX,
+    radiusZProfile: torsoRadiusZ,
+    torsoTopRing,
+    torsoBottomRing,
+    parts,
+    collisionPrimitives,
     boundsCm: {
-      width: Math.max(...radiusX) * 2,
-      height: heightCm,
-      depth: Math.max(...radiusZ) * 2,
+      width: maxX - minX,
+      height: Math.max(heightCm, maxY - minY),
+      depth: maxZ - minZ,
     },
   };
 }
@@ -575,9 +1003,11 @@ export function buildBodyCalibration(
     chestRing,
     waistRing,
     hipsRing,
+    shoulderRing: clamp(Math.round(sampleCount * 0.18), 1, sampleCount - 4),
+    crotchRing: clamp(Math.round(sampleCount * 0.63), 4, sampleCount - 2),
   };
 
-  const mesh = buildMesh(radiusX, radiusZ, measurements.heightCm, landmarks);
+  const mesh = buildAnatomicalMesh(radiusX, radiusZ, measurements.heightCm, landmarks);
   const frontBackDifference = meanAbsoluteDifference(
     silhouettes.front.widthProfile,
     silhouettes.back.widthProfile,
@@ -606,8 +1036,8 @@ export function buildBodyCalibration(
   }
 
   return {
-    version: 1,
-    method: "weak-perspective-elliptical-hull-v1",
+    version: 2,
+    method: "weak-perspective-anatomical-primitives-v2",
     sampleCount,
     silhouettes,
     mesh,

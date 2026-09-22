@@ -26,12 +26,6 @@ const CAPTURE_VIEWS: Array<{
   { key: "frontLeft", label: "315° · Frente-esquerda", hint: "Última diagonal antes de voltar à frente" },
 ];
 
-const CORE_SIDES: BodySide[] = [
-  "front",
-  "right",
-  "back",
-  "left",
-];
 
 type CalibrationStatus = "idle" | "processing" | "saving" | "saved";
 
@@ -484,12 +478,26 @@ export default function BodyPage() {
             <div className="mt-7">
               <h3 className="text-sm font-bold">Confiança das vistas</h3>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {SIDES.map(({ key, label }) => (
-                  <div key={key} className="flex items-center justify-between border-b border-white/10 py-2 text-sm">
-                    <span className="text-white/70">{label}</span>
-                    <span className="font-semibold tabular-nums">{Math.round(calibration.silhouettes[key].confidence * 100)}%</span>
-                  </div>
-                ))}
+                {CAPTURE_VIEWS.map(({ key, label }) => {
+                  const silhouette =
+                    calibration.denseSilhouettes?.[key] ??
+                    (key === "front" ||
+                    key === "right" ||
+                    key === "back" ||
+                    key === "left"
+                      ? calibration.silhouettes[key]
+                      : undefined);
+                  return (
+                    <div key={key} className="flex items-center justify-between border-b border-white/10 py-2 text-sm">
+                      <span className="text-white/70">{label}</span>
+                      <span className="font-semibold tabular-nums">
+                        {silhouette
+                          ? `${Math.round(silhouette.confidence * 100)}%`
+                          : "—"}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

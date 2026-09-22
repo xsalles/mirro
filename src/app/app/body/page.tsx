@@ -430,8 +430,10 @@ export default function BodyPage() {
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
-              {calibration.version === 10
-                ? "Scanner bundle v10 pronto"
+              {calibration.version === 11
+                ? "Scanner denso v11 pronto"
+                : calibration.version === 10
+                  ? "Scanner bundle v10 pronto"
                 : calibration.version === 9
                   ? "Scanner robusto v9 pronto"
                 : calibration.version === 8
@@ -447,8 +449,10 @@ export default function BodyPage() {
                   : "BodyMesh anatômico pronto"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 10 && mvs
-                ? `MVS v10 ativo: bundle da turntable com ângulo por frame/eixo inclinado, pirâmide multi-resolução e reduções WASM SIMD quando suportadas. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
+              {calibration.version === 11 && mvs
+                ? `MVS v11 ativo: bundle com residual de bordas da imagem, rejeição robusta de frames, depth edge-aware densificado e hot paths SIMD ativados apenas quando o benchmark local vence o JS. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras válidas; ${mvs.turntableRig?.rejectedViews?.length ?? 0} frame(s) rejeitado(s); o SDF continua sendo o envelope físico conservador.`
+                : calibration.version === 10 && mvs
+                  ? `MVS v10 ativo: bundle da turntable com ângulo por frame/eixo inclinado, pirâmide multi-resolução e reduções WASM SIMD quando suportadas. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
                 : calibration.version === 9 && mvs
                   ? `MVS robusto ativo: ZNCC + Census + gradiente, busca coarse-to-fine e profundidade subpixel. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram aos filtros; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
                 : calibration.version === 8 && mvs
@@ -532,8 +536,8 @@ export default function BodyPage() {
               <div>
                 <dt className="text-xs font-semibold text-white/55">Bundle turntable</dt>
                 <dd className="mt-1 text-sm font-bold tabular-nums">
-                  {mvs?.turntableRig?.version === 2
-                    ? `${(mvs.turntableRig.axisTiltDeg ?? 0).toFixed(2)}° tilt · ${(mvs.turntableRig.bundleResidualCm ?? 0).toFixed(2)} cm RMS`
+                  {mvs?.turntableRig?.version && mvs.turntableRig.version >= 2
+                    ? `${(mvs.turntableRig.axisTiltDeg ?? 0).toFixed(2)}° tilt · ${(mvs.turntableRig.bundleResidualCm ?? 0).toFixed(2)} cm RMS${mvs.turntableRig.version >= 3 ? ` · ${mvs.turntableRig.rejectedViews?.length ?? 0} rej.` : ""}`
                     : "—"}
                 </dd>
               </div>

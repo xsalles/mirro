@@ -8,15 +8,24 @@ import { Button } from "@/components/ui/button";
 import { useMirro } from "@/components/mirro-provider";
 import { calibrateBodyFromPhotos } from "@/lib/mirro/body-image-processing";
 import { loadMedia } from "@/lib/mirro/db";
-import type { BodySide, MediaRef } from "@/lib/mirro/types";
+import type { BodyViewId, MediaRef } from "@/lib/mirro/types";
 import { validMeasurement, validateImage } from "@/lib/mirro/validation";
 
-const SIDES: Array<{ key: BodySide; label: string; hint: string }> = [
-  { key: "front", label: "Frente", hint: "Corpo inteiro; braços levemente afastados" },
-  { key: "right", label: "Lado direito", hint: "Mesma altura e enquadramento da câmera" },
-  { key: "back", label: "Costas", hint: "Corpo inteiro e fundo contrastante" },
-  { key: "left", label: "Lado esquerdo", hint: "Repita a postura da outra lateral" },
+const CAPTURE_VIEWS: Array<{
+  key: BodyViewId;
+  label: string;
+  hint: string;
+}> = [
+  { key: "front", label: "0° · Frente", hint: "Corpo inteiro; braços levemente afastados" },
+  { key: "frontRight", label: "45° · Frente-direita", hint: "Gire o corpo 45° sem mover o celular" },
+  { key: "right", label: "90° · Direita", hint: "Perfil completo; permaneça no mesmo ponto" },
+  { key: "backRight", label: "135° · Costas-direita", hint: "Mais 45° mantendo pés e centro da pose" },
+  { key: "back", label: "180° · Costas", hint: "Corpo inteiro e fundo contrastante" },
+  { key: "backLeft", label: "225° · Costas-esquerda", hint: "Gire mais 45° sem alterar a câmera" },
+  { key: "left", label: "270° · Esquerda", hint: "Perfil oposto no mesmo enquadramento" },
+  { key: "frontLeft", label: "315° · Frente-esquerda", hint: "Última diagonal antes de voltar à frente" },
 ];
+
 
 type CalibrationStatus = "idle" | "processing" | "saving" | "saved";
 
@@ -34,11 +43,11 @@ export default function BodyPage() {
     thighCm: current?.thighCm ? String(current.thighCm) : "",
     inseamCm: current?.inseamCm ? String(current.inseamCm) : "",
   });
-  const [files, setFiles] = useState<Partial<Record<BodySide, File>>>({});
+  const [files, setFiles] = useState<Partial<Record<BodyViewId, File>>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<CalibrationStatus>("idle");
 
-  function choose(side: BodySide, file: File | undefined) {
+  function choose(side: BodyViewId, file: File | undefined) {
     if (!file) return;
     const error = validateImage(file, 12);
     setErrors((prev) => ({ ...prev, [side]: error ?? "", calibration: "" }));
@@ -93,9 +102,10 @@ export default function BodyPage() {
       nextErrors.inseamCm = "Informe a entreperna entre 45 e 110 cm.";
     }
 
-    for (const side of SIDES) {
-      if (!files[side.key] && !current?.photos[side.key]) {
-        nextErrors[side.key] = "Adicione esta foto para completar a calibração.";
+    for (const view of CAPTURE_VIEWS) {
+      if (!files[view.key] && !current?.photos[view.key]) {
+        nextErrors[view.key] =
+          "Adicione esta vista para ativar o visual hull de 8 ângulos.";
       }
     }
 
@@ -104,9 +114,9 @@ export default function BodyPage() {
 
     try {
       setStatus("processing");
-      const sourcePhotos = {} as Record<BodySide, Blob>;
+      const sourcePhotos: Partial<Record<BodyViewId, Blob>> = {};
 
-      for (const { key } of SIDES) {
+      for (const { key } of CAPTURE_VIEWS) {
         const selected = files[key];
         if (selected) {
           sourcePhotos[key] = selected;
@@ -114,7 +124,7 @@ export default function BodyPage() {
         }
 
         const savedRef = current?.photos[key];
-        if (!savedRef) throw new Error("Uma das quatro fotos salvas não foi encontrada.");
+        if (!savedRef) throw new Error("Uma das oito fotos salvas não foi encontrada.");
         const savedBlob = await loadMedia(savedRef.key);
         if (!savedBlob) throw new Error(`A foto de ${key} não está mais disponível neste navegador.`);
         sourcePhotos[key] = savedBlob;
@@ -130,7 +140,7 @@ export default function BodyPage() {
       const media: Array<{ blob: Blob; ref: MediaRef }> = [];
       const photos = { ...(current?.photos ?? {}) };
 
-      for (const { key } of SIDES) {
+      for (const { key } of CAPTURE_VIEWS) {
         const file = files[key];
         if (!file) continue;
         const ref: MediaRef = {
@@ -159,7 +169,7 @@ export default function BodyPage() {
       const message =
         error instanceof Error
           ? error.message
-          : "Não foi possível calibrar as quatro vistas.";
+          : "Não foi possível calibrar as oito vistas.";
       setErrors((prev) => ({
         ...prev,
         calibration: `${message} Tente fotos com fundo uniforme e contraste maior.`,
@@ -170,6 +180,7 @@ export default function BodyPage() {
 
   const calibration = current?.calibration;
   const visualHull = calibration?.mesh.visualHull;
+  const photometric = visualHull?.photometricRefinement;
   const activeIntrinsics =
     calibration?.cameraRig?.intrinsics ?? state.optics?.intrinsics;
   const activeDistortion =
@@ -182,7 +193,7 @@ export default function BodyPage() {
         <div>
           <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Meu corpo</h1>
           <p className="mt-2 max-w-2xl text-[var(--muted)]">
-            No modo denso, deixe o celular parado e gire o corpo no mesmo ponto em 0°, 90°, 180° e 270°. As quatro máscaras completas viram um visual hull 3D; roupa justa, corpo inteiro e fundo simples continuam essenciais.
+            Para o scan v7, deixe o celular completamente parado e gire o corpo no mesmo ponto em passos de 45°: 0°, 45°, 90°, 135°, 180°, 225°, 270° e 315°. As oito máscaras apertam o visual hull nas diagonais; roupa justa, corpo inteiro e fundo simples continuam essenciais.
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--muted)]">
@@ -196,7 +207,7 @@ export default function BodyPage() {
             <div>
               <h2 className="text-lg font-bold">Fotos de calibração</h2>
               <p className="mt-1 text-sm text-[var(--muted)]">
-                Para o visual hull, o celular deve ficar imóvel: a pessoa gira no mesmo lugar entre frente, lateral direita, costas e lateral esquerda. Se já houver calibração óptica salva, o cartão não precisa aparecer nessas quatro fotos.
+                Para o visual hull de 8 vistas, o celular fica imóvel e somente a pessoa gira em passos de 45°. Marque o chão para manter os pés e o eixo do corpo no mesmo ponto. Com calibração óptica salva, o cartão não precisa aparecer nessas fotos.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -218,7 +229,7 @@ export default function BodyPage() {
           </div>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {SIDES.map(({ key, label, hint }) => {
+            {CAPTURE_VIEWS.map(({ key, label, hint }) => {
               const selected = files[key];
               const existing = current?.photos[key];
               const error = errors[key];
@@ -363,7 +374,7 @@ export default function BodyPage() {
         <div className="flex flex-wrap items-center gap-4">
           <Button type="submit" disabled={status === "processing" || status === "saving"}>
             {status === "processing"
-              ? "Extraindo 4 silhuetas…"
+              ? "Extraindo 8 silhuetas…"
               : status === "saving"
                 ? "Salvando BodyMesh…"
                 : current
@@ -374,7 +385,7 @@ export default function BodyPage() {
             {status === "processing"
               ? "Processando as fotos localmente."
               : status === "saved"
-                ? "Silhuetas e BodyMesh salvos neste navegador."
+                ? "8 silhuetas, visual hull e SDF salvos neste navegador."
                 : hasPendingPhotos && calibration
                   ? "Há fotos novas aguardando recalibração."
                   : ""}
@@ -386,8 +397,10 @@ export default function BodyPage() {
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
-              {calibration.version === 6
-                ? "Visual Hull v6 pronto"
+              {calibration.version === 7
+                ? "Scanner geométrico v7 pronto"
+                : calibration.version === 6
+                  ? "Visual Hull v6 pronto"
                 : calibration.version === 5
                   ? "Realism Engine v5 pronto"
                 : calibration.version === 4
@@ -395,8 +408,10 @@ export default function BodyPage() {
                   : "BodyMesh anatômico pronto"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 6 && calibration.mesh.visualHull
-                ? "Reconstrução volumétrica ativa: voxel carving pelas quatro máscaras, marching tetrahedra, atlas multibanda e lente dedicada quando disponível."
+              {calibration.version === 7 && calibration.mesh.visualHull?.signedDistanceField
+                ? `8 vistas a cada 45°, visual hull apertado nas diagonais e SDF 3D ativo para colisão por gradiente.${photometric?.refinedVertexCount ? ` Plane-sweep fotométrico refinou ${photometric.refinedVertexCount.toLocaleString("pt-BR")} vértices do torso.` : ""}`
+                : calibration.version === 6 && calibration.mesh.visualHull
+                  ? "Reconstrução volumétrica ativa: voxel carving pelas quatro máscaras, marching tetrahedra, atlas multibanda e lente dedicada quando disponível."
                 : calibration.version === 5 && calibration.cameraRig?.distortion
                   ? "Brown–Conrady ativo: lente corrigida antes da segmentação e da textura, color transfer local 3×8 e BodyMesh assimétrico de maior densidade."
                 : calibration.version === 4 && calibration.cameraRig
@@ -406,7 +421,7 @@ export default function BodyPage() {
                   : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -428,6 +443,16 @@ export default function BodyPage() {
                 <dd className="mt-1 text-sm font-bold tabular-nums">
                   {visualHull
                     ? `${visualHull.occupiedVoxelCount.toLocaleString("pt-BR")} · ${visualHull.resolution.x}×${visualHull.resolution.y}×${visualHull.resolution.z}`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Photo-consistency</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {photometric
+                    ? photometric.refinedVertexCount > 0
+                      ? `${photometric.refinedVertexCount.toLocaleString("pt-BR")} vtx · -${photometric.meanInwardOffsetCm.toFixed(2)} cm`
+                      : "sem ajuste confiável"
                     : "—"}
                 </dd>
               </div>
@@ -464,12 +489,26 @@ export default function BodyPage() {
             <div className="mt-7">
               <h3 className="text-sm font-bold">Confiança das vistas</h3>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {SIDES.map(({ key, label }) => (
-                  <div key={key} className="flex items-center justify-between border-b border-white/10 py-2 text-sm">
-                    <span className="text-white/70">{label}</span>
-                    <span className="font-semibold tabular-nums">{Math.round(calibration.silhouettes[key].confidence * 100)}%</span>
-                  </div>
-                ))}
+                {CAPTURE_VIEWS.map(({ key, label }) => {
+                  const silhouette =
+                    calibration.denseSilhouettes?.[key] ??
+                    (key === "front" ||
+                    key === "right" ||
+                    key === "back" ||
+                    key === "left"
+                      ? calibration.silhouettes[key]
+                      : undefined);
+                  return (
+                    <div key={key} className="flex items-center justify-between border-b border-white/10 py-2 text-sm">
+                      <span className="text-white/70">{label}</span>
+                      <span className="font-semibold tabular-nums">
+                        {silhouette
+                          ? `${Math.round(silhouette.confidence * 100)}%`
+                          : "—"}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -482,8 +521,10 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 6
-                  ? "Visual hull denso, atlas multibanda e calibração local concluídos neste navegador."
+                {calibration.version === 7
+                  ? "8-view visual hull, SDF 3D e seam optimization concluídos localmente."
+                  : calibration.version === 6
+                    ? "Visual hull denso, atlas multibanda e calibração local concluídos neste navegador."
                   : calibration.version === 5
                     ? "Undistortion de lente, color field local e superfície assimétrica concluídos localmente."
                   : calibration.version === 4

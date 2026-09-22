@@ -1,3 +1,7 @@
+import {
+  sampleSignedDistance,
+  sampleSignedDistanceGradient,
+} from "./signed-distance-field";
 import type {
   BodyCollisionPrimitive,
   BodyMesh,
@@ -89,6 +93,17 @@ function visualHullOccupied(
   z: number,
   thicknessCm = 0,
 ) {
+  if (hull.signedDistanceField) {
+    return (
+      sampleSignedDistance(
+        hull.signedDistanceField,
+        x,
+        y,
+        z,
+      ) < thicknessCm
+    );
+  }
+
   const occupancy = decodeVisualHull(hull);
   const point = hullGridPoint(hull, x, y, z);
   const radius = Math.max(
@@ -122,12 +137,88 @@ function visualHullOccupied(
   return direct >= 0 && Boolean(occupancy[direct]);
 }
 
+function projectOutsideSignedDistanceField(
+  hull: BodyVisualHull,
+  positions: number[],
+  particleIndex: number,
+  thicknessCm: number,
+) {
+  const sdf = hull.signedDistanceField;
+  if (!sdf) return false;
+
+  const offset = particleIndex * 3;
+  let x = positions[offset];
+  let y = positions[offset + 1];
+  let z = positions[offset + 2];
+  let distance = sampleSignedDistance(sdf, x, y, z);
+  const target = thicknessCm + Math.max(0.035, thicknessCm * 0.12);
+
+  if (distance >= target) return false;
+
+  let projected = false;
+  const maxStep = Math.max(
+    0.35,
+    Math.min(...sdf.stepCm) * 1.8,
+  );
+
+  for (let iteration = 0; iteration < 10; iteration += 1) {
+    distance = sampleSignedDistance(sdf, x, y, z);
+    if (distance >= target) break;
+
+    const gradient = sampleSignedDistanceGradient(
+      sdf,
+      x,
+      y,
+      z,
+    );
+    const gradientLength = Math.hypot(
+      gradient[0],
+      gradient[1],
+      gradient[2],
+    );
+    if (gradientLength < 1e-5) break;
+
+    const correction = Math.min(
+      maxStep,
+      Math.max(0.04, target - distance),
+    );
+    x += gradient[0] * correction;
+    y += gradient[1] * correction;
+    z += gradient[2] * correction;
+    projected = true;
+  }
+
+  if (
+    projected &&
+    sampleSignedDistance(sdf, x, y, z) >=
+      thicknessCm - 0.02
+  ) {
+    positions[offset] = x;
+    positions[offset + 1] = y;
+    positions[offset + 2] = z;
+    return true;
+  }
+
+  return false;
+}
+
 function projectOutsideVisualHull(
   hull: BodyVisualHull,
   positions: number[],
   particleIndex: number,
   thicknessCm: number,
 ) {
+  if (
+    hull.signedDistanceField &&
+    projectOutsideSignedDistanceField(
+      hull,
+      positions,
+      particleIndex,
+      thicknessCm,
+    )
+  ) {
+    return true;
+  }
   const offset = particleIndex * 3;
   const x = positions[offset];
   const y = positions[offset + 1];

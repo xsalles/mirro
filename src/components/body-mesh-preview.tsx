@@ -14,7 +14,10 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
 
     const mesh = calibration.mesh;
     const surface = mesh.visualHull;
-    const surfaceVertices = surface?.vertices ?? mesh.vertices;
+    const surfaceVertices =
+      surface?.photometricRefinement?.surfaceVertices ??
+      surface?.vertices ??
+      mesh.vertices;
     const surfaceIndices = surface?.indices ?? mesh.indices;
     const width = canvas.width;
     const height = canvas.height;
@@ -116,8 +119,11 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.mesh.visualHull
-          ? "Visual hull v6: volume esculpido pelas quatro máscaras completas e superfície extraída por marching tetrahedra com suavização Taubin."
+        {calibration.version === 7 &&
+        calibration.mesh.visualHull?.signedDistanceField
+          ? "Scanner v7: 8 silhuetas a cada 45°, visual hull apertado nas diagonais e SDF 3D persistido para colisão por gradiente."
+          : calibration.mesh.visualHull
+            ? "Visual hull v6: volume esculpido pelas quatro máscaras completas e superfície extraída por marching tetrahedra com suavização Taubin."
           : calibration.mesh.version === 4
             ? "BodyMesh v4: torso 96×48 com linha central frente–costas derivada das laterais; UV e colisão acompanham a assimetria observada."
           : calibration.mesh.version === 3

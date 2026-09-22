@@ -5,10 +5,16 @@ import {
   pointInsideExpandedBody,
   projectParticleOutsideBody,
 } from "../src/lib/mirro/body-collision";
+import {
+  buildSignedDistanceField,
+  sampleSignedDistance,
+  sampleSignedDistanceGradient,
+} from "../src/lib/mirro/signed-distance-field";
 import type {
   BodyMeasurements,
   BodySide,
   BodySilhouette,
+  BodyViewId,
 } from "../src/lib/mirro/types";
 
 function silhouette(
@@ -127,4 +133,145 @@ describe("dense body visual hull", () => {
       ),
     ).toBe(false);
   });
+
+  it("uses 45-degree silhouettes to tighten the hull and persists an SDF", () => {
+    const samples = 48;
+    const profile = new Array(samples).fill(40 / 174);
+    const allSilhouettes = Object.fromEntries(
+      (
+        [
+          "front",
+          "frontRight",
+          "right",
+          "backRight",
+          "back",
+          "backLeft",
+          "left",
+          "frontLeft",
+        ] as BodyViewId[]
+      ).map((view) => [
+        view,
+        silhouette(profile, 40, 64),
+      ]),
+    ) as Record<BodyViewId, BodySilhouette>;
+
+    const measurements: BodyMeasurements = {
+      heightCm: 174,
+      chestCm: 126,
+      waistCm: 112,
+      hipsCm: 126,
+    };
+    const base = buildBodyCalibration(
+      {
+        front: allSilhouettes.front,
+        right: allSilhouettes.right,
+        back: allSilhouettes.back,
+        left: allSilhouettes.left,
+      },
+      measurements,
+    );
+
+    const four = buildBodyVisualHull({
+      views: {
+        front: rectangularMask(64),
+        right: rectangularMask(64),
+        back: rectangularMask(64),
+        left: rectangularMask(64),
+      },
+      silhouettes: {
+        front: allSilhouettes.front,
+        right: allSilhouettes.right,
+        back: allSilhouettes.back,
+        left: allSilhouettes.left,
+      },
+      baseMesh: base.mesh,
+      bodyHeightCm: measurements.heightCm,
+    });
+
+    const eightViews = Object.fromEntries(
+      (
+        [
+          "front",
+          "frontRight",
+          "right",
+          "backRight",
+          "back",
+          "backLeft",
+          "left",
+          "frontLeft",
+        ] as BodyViewId[]
+      ).map((view) => [view, rectangularMask(64)]),
+    ) as Record<BodyViewId, ReturnType<typeof rectangularMask>>;
+
+    const eight = buildBodyVisualHull({
+      views: eightViews,
+      silhouettes: allSilhouettes,
+      baseMesh: base.mesh,
+      bodyHeightCm: measurements.heightCm,
+    });
+
+    expect(four.viewCount).toBe(4);
+    expect(eight.viewCount).toBe(8);
+    expect(eight.version).toBe(2);
+    expect(eight.method).toBe(
+      "eight-view-turntable-marching-tetrahedra-v2",
+    );
+    expect(eight.occupiedVoxelCount).toBeLessThan(
+      four.occupiedVoxelCount * 0.96,
+    );
+    expect(eight.signedDistanceField).toBeDefined();
+    expect(eight.signedDistanceField?.values).toBeInstanceOf(
+      Int16Array,
+    );
+  });
+
+  it("builds a smooth signed distance gradient for non-axis collision", () => {
+    const size = 25;
+    const occupancy = new Uint8Array(size * size * size);
+    const center = (size - 1) / 2;
+    const indexOf = (x: number, y: number, z: number) =>
+      (y * size + z) * size + x;
+
+    for (let y = 0; y < size; y += 1) {
+      for (let z = 0; z < size; z += 1) {
+        for (let x = 0; x < size; x += 1) {
+          const dx = x - center;
+          const dy = y - center;
+          const dz = z - center;
+          if (Math.hypot(dx, dy, dz) <= 7) {
+            occupancy[indexOf(x, y, z)] = 1;
+          }
+        }
+      }
+    }
+
+    const sdf = buildSignedDistanceField({
+      occupancy,
+      resolution: { x: size, y: size, z: size },
+      originCm: [-12, -12, -12],
+      stepCm: [1, 1, 1],
+      quantizationCm: 0.02,
+    });
+
+    expect(sampleSignedDistance(sdf, 0, 0, 0)).toBeLessThan(0);
+    expect(sampleSignedDistance(sdf, 10, 0, 0)).toBeGreaterThan(0);
+
+    const point: [number, number, number] = [4, 0, 3];
+    const gradient = sampleSignedDistanceGradient(
+      sdf,
+      point[0],
+      point[1],
+      point[2],
+    );
+    const radialLength = Math.hypot(point[0], point[2]);
+    const radialX = point[0] / radialLength;
+    const radialZ = point[2] / radialLength;
+    const alignment =
+      gradient[0] * radialX + gradient[2] * radialZ;
+
+    expect(Math.abs(gradient[0])).toBeGreaterThan(0.25);
+    expect(Math.abs(gradient[2])).toBeGreaterThan(0.2);
+    expect(alignment).toBeGreaterThan(0.75);
+  });
+
 });

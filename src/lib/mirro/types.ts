@@ -1,5 +1,15 @@
 export type BodySide = "front" | "right" | "back" | "left";
 
+export type BodyViewId =
+  | "front"
+  | "frontRight"
+  | "right"
+  | "backRight"
+  | "back"
+  | "backLeft"
+  | "left"
+  | "frontLeft";
+
 export type MediaRef = {
   key: string;
   name: string;
@@ -152,9 +162,26 @@ export type OpticalCalibrationProfile = {
   createdAt: string;
 };
 
-export type BodyVisualHull = {
+export type BodySignedDistanceField = {
   version: 1;
-  method: "four-view-turntable-marching-tetrahedra-v1";
+  method: "exact-edt-sdf-v1";
+  resolution: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  originCm: [number, number, number];
+  stepCm: [number, number, number];
+  quantizationCm: number;
+  maxDistanceCm: number;
+  values: Int16Array;
+};
+
+export type BodyVisualHull = {
+  version: 1 | 2;
+  method:
+    | "four-view-turntable-marching-tetrahedra-v1"
+    | "eight-view-turntable-marching-tetrahedra-v2";
   captureMode: "fixed-camera-person-turntable";
   resolution: {
     x: number;
@@ -167,7 +194,10 @@ export type BodyVisualHull = {
     depth: number;
   };
   originCm: [number, number, number];
+  gridStepCm?: [number, number, number];
   voxelSizeCm: number;
+  viewCount?: 4 | 8;
+  viewAnglesDeg?: number[];
   occupiedVoxelCount: number;
   occupancyRle: {
     start: 0 | 1;
@@ -176,6 +206,17 @@ export type BodyVisualHull = {
   vertices: number[];
   normals: number[];
   indices: number[];
+  signedDistanceField?: BodySignedDistanceField;
+  photometricRefinement?: {
+    version: 1;
+    method: "turntable-plane-sweep-photoconsistency-v1";
+    refinedVertexCount: number;
+    meanInwardOffsetCm: number;
+    maxInwardOffsetCm: number;
+    meanRelativeImprovement: number;
+    surfaceVertices?: number[];
+    surfaceNormals?: number[];
+  };
 };
 
 export type BodyPartKind =
@@ -256,16 +297,18 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3 | 4 | 5 | 6;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
     | "metric-target-anatomical-v3"
     | "pinhole-bundle-anatomical-v4"
     | "lens-undistorted-local-color-surface-v5"
-    | "visual-hull-multiband-v6";
+    | "visual-hull-multiband-v6"
+    | "eight-view-sdf-gradient-seams-v7";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
+  denseSilhouettes?: Partial<Record<BodyViewId, BodySilhouette>>;
   mesh: BodyMesh;
   viewCalibration?: Partial<Record<BodySide, BodyViewCalibration>>;
   cameraRig?: BodyCameraRig;
@@ -280,7 +323,7 @@ export type BodyCalibration = {
 };
 
 export type BodyProfile = BodyMeasurements & {
-  photos: Partial<Record<BodySide, MediaRef>>;
+  photos: Partial<Record<BodyViewId, MediaRef>>;
   calibration?: BodyCalibration;
   updatedAt: string;
 };

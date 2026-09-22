@@ -109,9 +109,9 @@ Structural constraints are tagged as warp or weft; XPBD selects separate complia
 
 The try-on runs 144 simulation steps in a dedicated Web Worker. It sends bounded position snapshots back to the UI for determinate progress and preview refreshes. Browsers without Worker support fall back to small `requestAnimationFrame` batches.
 
-## Collision model — dense visual hull + anatomical fallback implemented
+## Collision model — SDF gradient + dense/anatomical fallback implemented
 
-When BodyCalibration v6 contains a dense visual hull, cloth collision queries the compressed voxel occupancy volume directly and projects penetrating particles to the nearest empty axial cell. Otherwise body collision evaluates the union of anatomical primitives:
+When BodyCalibration v7 contains an SDF, cloth collision samples the signed distance trilinearly and follows its normalized spatial gradient until the particle reaches the requested cloth thickness. If the gradient degenerates numerically, MIRRO falls back to the v6 voxel ejection path; older profiles still use anatomical primitives. Otherwise body collision evaluates the union of anatomical primitives:
 
 - measured elliptical torso hull
 - head ellipsoid
@@ -135,6 +135,7 @@ Physical mode now defaults to a Three.js r186 scene using `WebGPURenderer`.
 - the four saved body views are exposure/white-balance calibrated from segmented body pixels.
 - v5 adds a bounded 3×8 local RGB/exposure field per view; local gains stay close to the global correction to avoid aggressive recoloring.
 - v6 builds a three-band Laplacian-style body atlas: low-frequency color uses a wide overlap, medium-frequency structure a narrower overlap, and fine detail the narrowest dominant-view seam.
+- v7 detects overlap competition zones and runs a screened-Poisson relaxation in gradient space. The dominant source supplies detail gradients while the multiband result anchors absolute color; horizontal neighbors wrap across U=0/1 so the 360° seam is optimized too.
 - BodyMesh vertices use continuous cylindrical UVs, eliminating the previous hard material boundary between front/right/back/left.
 - `MeshPhysicalMaterial` adds fabric roughness, sheen and low clearcoat; measured density/stiffness influence the material appearance when available.
 - light / medium / heavy fabric presets affect the PBR appearance as well as physics.
@@ -145,19 +146,21 @@ The dependency-free Canvas renderer remains as **Malha técnica** for debugging 
 
 The renderer materially improves realism, but exact visual fit still depends on capture calibration, anatomical approximation and fabric-parameter quality.
 
-## Surface reconstruction v6
+## Surface reconstruction v7
 
-The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 additionally keeps each full binary silhouette mask and carves a bounded 3D voxel volume under the fixed-camera/person-turntable assumption. A voxel survives only when its orthogonal projection is inside all four body masks. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
+The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 introduced four-mask carving. V7 expands capture to eight views at 45° intervals; each diagonal silhouette adds another projection half-space and cuts away the oversized diagonal corners left by four orthogonal views. A voxel survives only when its orthogonal projection is inside all four body masks. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
 
-The visual hull is used by the PBR body renderer and persisted together with RLE-compressed voxel occupancy for cloth collision. The anatomical BodyMesh remains available for semantic landmarks, garment initialization and fallback.
+The visual hull is used by the PBR body renderer and persisted together with RLE-compressed voxel occupancy. V7 also computes an exact separable 3D Euclidean distance transform for both inside and outside voxels, quantizes the signed field at 0.05 cm, and persists it for smooth cloth collision. The anatomical BodyMesh remains available for semantic landmarks, garment initialization and fallback.
 
-This is classical shape-from-silhouette, not dense stereo: concavities or surface detail invisible in the four silhouettes cannot be recovered honestly.
+The collision hull remains classical shape-from-silhouette. V7 adds a conservative first photometric refinement layer for rendering: torso vertices are plane-swept only inward along their radial ray, projected into the eight known turntable angles, and accepted only when at least three visible views reduce exposure-normalized color variance by a minimum threshold. The refined render surface is stored separately from the collision hull/SDF, so uncertain photoconsistency can never make cloth penetrate the conservative physical envelope.
+
+This is not yet a general dense-stereo reconstruction: the current sweep is radial, torso-scoped and uses the known fixed-camera turntable geometry. Concavities or hidden detail without stable multi-view texture remain unrecoverable.
 
 ## Engine roadmap
 
-- Add optional 8-view/45° body capture to tighten the visual hull around shoulders, arms and crotch.
-- Replace axial voxel ejection with a signed-distance field / gradient projection for smoother dense collision.
-- Add Poisson-gradient seam optimization after the current three-band multiband blend.
+- Add optional classical photometric surface refinement / plane-sweep stereo using the known 45° turntable geometry.
+- Add confidence-weighted multi-view photoconsistency so lighting changes do not overrule silhouette geometry.
+- Move dense reconstruction/SDF generation into a Worker/WASM path if mobile capture latency becomes significant.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
 - Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.

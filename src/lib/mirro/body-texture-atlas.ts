@@ -334,6 +334,146 @@ function opticsForSource(
   );
 }
 
+function dilateSeamMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radius = 3,
+) {
+  const output = new Uint8Array(mask);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (!mask[index]) continue;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const py = y + dy;
+        if (py < 0 || py >= height) continue;
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const px = (x + dx + width) % width;
+          output[py * width + px] = 1;
+        }
+      }
+    }
+  }
+  return output;
+}
+
+export function optimizeGradientDomainSeams(params: {
+  base: Uint8ClampedArray;
+  guidance: Uint8ClampedArray;
+  seamMask: Uint8Array;
+  width: number;
+  height: number;
+  iterations?: number;
+  screening?: number;
+}) {
+  const {
+    base,
+    guidance,
+    width,
+    height,
+  } = params;
+  if (
+    base.length !== width * height * 4 ||
+    guidance.length !== base.length ||
+    params.seamMask.length !== width * height
+  ) {
+    throw new Error(
+      "Atlas, guidance e seam mask precisam compartilhar as mesmas dimensões.",
+    );
+  }
+
+  const seamMask = dilateSeamMask(
+    params.seamMask,
+    width,
+    height,
+    3,
+  );
+  const seamIndices: number[] = [];
+  for (let index = 0; index < seamMask.length; index += 1) {
+    if (
+      seamMask[index] &&
+      base[index * 4 + 3] > 0
+    ) {
+      seamIndices.push(index);
+    }
+  }
+  if (!seamIndices.length) return new Uint8ClampedArray(base);
+
+  const pixelCount = width * height;
+  let current = new Float32Array(pixelCount * 3);
+  let next = new Float32Array(pixelCount * 3);
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const rgba = pixel * 4;
+    const rgb = pixel * 3;
+    current[rgb] = base[rgba];
+    current[rgb + 1] = base[rgba + 1];
+    current[rgb + 2] = base[rgba + 2];
+  }
+
+  const screening = params.screening ?? 1.15;
+  const iterations = params.iterations ?? 16;
+  const neighborIndex = (
+    x: number,
+    y: number,
+  ) => {
+    const wrappedX = (x + width) % width;
+    const clampedY = clamp(y, 0, height - 1);
+    return clampedY * width + wrappedX;
+  };
+
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    next.set(current);
+
+    for (const pixel of seamIndices) {
+      const x = pixel % width;
+      const y = Math.floor(pixel / width);
+      const neighbors = [
+        neighborIndex(x - 1, y),
+        neighborIndex(x + 1, y),
+        neighborIndex(x, y - 1),
+        neighborIndex(x, y + 1),
+      ];
+      const rgba = pixel * 4;
+      const rgb = pixel * 3;
+
+      for (let channel = 0; channel < 3; channel += 1) {
+        let neighborSum = 0;
+        let guidanceNeighborSum = 0;
+        for (const neighbor of neighbors) {
+          neighborSum += current[neighbor * 3 + channel];
+          guidanceNeighborSum +=
+            guidance[neighbor * 4 + channel];
+        }
+
+        const guidanceLaplacian =
+          4 * guidance[rgba + channel] -
+          guidanceNeighborSum;
+        const solved =
+          (neighborSum +
+            guidanceLaplacian +
+            screening * base[rgba + channel]) /
+          (4 + screening);
+
+        next[rgb + channel] = clamp(solved, 0, 255);
+      }
+    }
+
+    [current, next] = [next, current];
+  }
+
+  const output = new Uint8ClampedArray(base);
+  for (const pixel of seamIndices) {
+    const rgba = pixel * 4;
+    const rgb = pixel * 3;
+    output[rgba] = Math.round(current[rgb]);
+    output[rgba + 1] = Math.round(current[rgb + 1]);
+    output[rgba + 2] = Math.round(current[rgb + 2]);
+  }
+  return output;
+}
+
 export async function buildBodyTextureAtlas(params: {
   urls: Partial<Record<BodySide, string | null>>;
   silhouettes: Record<BodySide, BodySilhouette>;
@@ -395,6 +535,8 @@ export async function buildBodyTextureAtlas(params: {
     );
   }
   const output = context.createImageData(width, height);
+  const guidance = new Uint8ClampedArray(output.data.length);
+  const seamMask = new Uint8Array(width * height);
 
   for (let y = 0; y < height; y += 1) {
     const v = y / Math.max(1, height - 1);
@@ -417,6 +559,11 @@ export async function buildBodyTextureAtlas(params: {
       let highB = 0;
       let alpha = 0;
       let alphaWeight = 0;
+      let dominantWeight = 0;
+      let secondWeight = 0;
+      let dominantR = 0;
+      let dominantG = 0;
+      let dominantB = 0;
 
       for (const side of SIDES) {
         const pyramid = sources[side];
@@ -481,6 +628,16 @@ export async function buildBodyTextureAtlas(params: {
           localHorizontal,
           v,
         );
+
+        if (lowW > dominantWeight) {
+          secondWeight = dominantWeight;
+          dominantWeight = lowW;
+          dominantR = original[0] * gain[0];
+          dominantG = original[1] * gain[1];
+          dominantB = original[2] * gain[2];
+        } else if (lowW > secondWeight) {
+          secondWeight = lowW;
+        }
 
         if (lowW > 0) {
           lowR += blur8[0] * gain[0] * lowW;
@@ -552,9 +709,32 @@ export async function buildBodyTextureAtlas(params: {
                 255,
               )
             : 0;
+
+        guidance[offset] = clamp(Math.round(dominantR || r), 0, 255);
+        guidance[offset + 1] = clamp(Math.round(dominantG || g), 0, 255);
+        guidance[offset + 2] = clamp(Math.round(dominantB || b), 0, 255);
+        guidance[offset + 3] = output.data[offset + 3];
+
+        const competition =
+          dominantWeight > 1e-6
+            ? secondWeight / dominantWeight
+            : 0;
+        seamMask[y * width + x] =
+          competition > 0.34 ? 1 : 0;
       }
     }
   }
+
+  const optimized = optimizeGradientDomainSeams({
+    base: output.data,
+    guidance,
+    seamMask,
+    width,
+    height,
+    iterations: 16,
+    screening: 1.15,
+  });
+  output.data.set(optimized);
 
   context.putImageData(output, 0, 0);
   return canvas;

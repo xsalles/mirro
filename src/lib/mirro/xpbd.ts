@@ -25,8 +25,20 @@ function connectedPairs(mesh: GarmentMesh) {
   return pairs;
 }
 
-function complianceFor(kind: ClothConstraintKind, material: ClothMaterial) {
-  if (kind === "structural") return material.stretchCompliance;
+function complianceFor(
+  kind: ClothConstraintKind,
+  material: ClothMaterial,
+  axis: "warp" | "weft" | "bias" | "none" | undefined,
+) {
+  if (kind === "structural") {
+    if (axis === "warp") {
+      return material.stretchWarpCompliance ?? material.stretchCompliance;
+    }
+    if (axis === "weft") {
+      return material.stretchWeftCompliance ?? material.stretchCompliance;
+    }
+    return material.stretchCompliance;
+  }
   if (kind === "shear") return material.shearCompliance;
   if (kind === "bend") return material.bendCompliance;
   return material.seamCompliance;
@@ -51,7 +63,8 @@ function solveDistanceConstraint(
 
   const wa = mesh.inverseMass[a];
   const wb = mesh.inverseMass[b];
-  const alpha = complianceFor(constraint.kind, material) / (dt * dt);
+  const alpha =
+    complianceFor(constraint.kind, material, constraint.axis) / (dt * dt);
   const denominator = wa + wb + alpha;
   if (denominator <= 0) return;
 

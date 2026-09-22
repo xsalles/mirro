@@ -87,6 +87,8 @@ export type BodyMesh = {
     chestRing: number;
     waistRing: number;
     hipsRing: number;
+    shoulderRing?: number;
+    crotchRing?: number;
   };
   boundsCm: {
     width: number;

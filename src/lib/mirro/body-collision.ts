@@ -13,6 +13,7 @@ function ringRadii(mesh: BodyMesh, ring: number) {
     return {
       radiusX: Math.max(0.65, mesh.radiusXProfile[safeRing] ?? 0.65),
       radiusZ: Math.max(0.65, mesh.radiusZProfile[safeRing] ?? 0.65),
+      centerZ: mesh.centerZProfile?.[safeRing] ?? 0,
     };
   }
 
@@ -22,6 +23,7 @@ function ringRadii(mesh: BodyMesh, ring: number) {
   return {
     radiusX: Math.max(0.65, Math.abs(mesh.vertices[first] ?? 0.65)),
     radiusZ: Math.max(0.65, Math.abs(mesh.vertices[quarter + 2] ?? 0.65)),
+    centerZ: mesh.centerZProfile?.[safeRing] ?? 0,
   };
 }
 
@@ -43,6 +45,7 @@ export function getBodySectionAtY(mesh: BodyMesh, y: number) {
   return {
     radiusX: a.radiusX + (b.radiusX - a.radiusX) * mix,
     radiusZ: a.radiusZ + (b.radiusZ - a.radiusZ) * mix,
+    centerZ: a.centerZ + (b.centerZ - a.centerZ) * mix,
     insideHeight: y >= -halfHeight && y <= halfHeight,
   };
 }
@@ -129,7 +132,14 @@ function pointInsidePrimitive(
     Math.max(1e-6, primitive.topY - primitive.bottomY);
   const rx = interpolateProfile(primitive.radiusX, t) + thicknessCm;
   const rz = interpolateProfile(primitive.radiusZ, t) + thicknessCm;
-  return (x * x) / (rx * rx) + (z * z) / (rz * rz) < 1;
+  const centerZ = primitive.centerZ
+    ? interpolateProfile(primitive.centerZ, t)
+    : 0;
+  return (
+    (x * x) / (rx * rx) +
+      ((z - centerZ) * (z - centerZ)) / (rz * rz) <
+    1
+  );
 }
 
 function projectAgainstPrimitive(
@@ -204,17 +214,21 @@ function projectAgainstPrimitive(
     Math.max(1e-6, primitive.topY - primitive.bottomY);
   const rx = interpolateProfile(primitive.radiusX, t) + thicknessCm;
   const rz = interpolateProfile(primitive.radiusZ, t) + thicknessCm;
-  const q = (x * x) / (rx * rx) + (z * z) / (rz * rz);
+  const centerZ = primitive.centerZ
+    ? interpolateProfile(primitive.centerZ, t)
+    : 0;
+  const dz = z - centerZ;
+  const q = (x * x) / (rx * rx) + (dz * dz) / (rz * rz);
   if (q >= 1) return false;
 
   if (q < 1e-8) {
-    positions[offset + 2] = z < 0 ? -rz : rz;
+    positions[offset + 2] = centerZ + (dz < 0 ? -rz : rz);
     return true;
   }
 
   const scale = 1 / Math.sqrt(q);
   positions[offset] = x * scale;
-  positions[offset + 2] = z * scale;
+  positions[offset + 2] = centerZ + dz * scale;
   return true;
 }
 
@@ -234,19 +248,21 @@ function projectLegacyHull(
   const radiusX = section.radiusX + thicknessCm;
   const radiusZ = section.radiusZ + thicknessCm;
   const nx = x / radiusX;
-  const nz = z / radiusZ;
+  const nz = (z - section.centerZ) / radiusZ;
   const ellipse = nx * nx + nz * nz;
 
   if (ellipse >= 1) return false;
 
   if (ellipse < 1e-8) {
-    positions[offset + 2] = z < 0 ? -radiusZ : radiusZ;
+    positions[offset + 2] =
+      section.centerZ + (z < section.centerZ ? -radiusZ : radiusZ);
     return true;
   }
 
   const scale = 1 / Math.sqrt(ellipse);
   positions[offset] = x * scale;
-  positions[offset + 2] = z * scale;
+  positions[offset + 2] =
+    section.centerZ + (z - section.centerZ) * scale;
   return true;
 }
 
@@ -309,5 +325,9 @@ export function pointInsideExpandedBody(
   if (!section.insideHeight) return false;
   const rx = section.radiusX + thicknessCm;
   const rz = section.radiusZ + thicknessCm;
-  return (x * x) / (rx * rx) + (z * z) / (rz * rz) < 1;
+  return (
+    (x * x) / (rx * rx) +
+      ((z - section.centerZ) * (z - section.centerZ)) / (rz * rz) <
+    1
+  );
 }

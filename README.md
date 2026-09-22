@@ -24,7 +24,7 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - IndexedDB-only private local storage
 - Responsive product shell
 
-The current **Físico 3D beta** now adds classical multi-view stereo on top of the eight-view scan: bounded ZNCC plane sweep, confidence/ambiguity rejection, cross-view depth consistency and conservative TSDF fusion. When the saved optical profile matches the scan, MVS uses calibrated turntable perspective; otherwise it falls back to metric orthographic projection. The v7 SDF remains the physical cloth-collision envelope. It still should not be sold as exact photoreal fit: a four-view visual hull cannot recover concavities or hidden surface detail, and fabric-library values remain engineering presets unless the user supplies measurements. See `ARCHITECTURE.md`.
+The current **Físico 3D beta** now adds classical multi-view stereo on top of the eight-view scan: bounded ZNCC plane sweep, confidence/ambiguity rejection, cross-view depth consistency and conservative TSDF fusion. When the saved optical profile matches the scan, MVS uses calibrated turntable perspective; otherwise it falls back to metric orthographic projection. The v7 SDF remains the physical cloth-collision envelope. It still should not be sold as exact photoreal fit: eight-view MVS can recover only texture-supported geometry inside the conservative silhouette envelope; textureless, specular, self-occluded or moving regions still fall back to the visual hull, and fabric-library values remain engineering presets unless the user supplies measurements. See `ARCHITECTURE.md`.
 
 ## Development
 

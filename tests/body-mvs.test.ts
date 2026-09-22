@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { RgbaImage } from "../src/lib/mirro/body-calibration";
-import { buildClassicalMultiViewStereo } from "../src/lib/mirro/body-mvs";
+import {
+  buildClassicalMultiViewStereo,
+  type MultiViewStereoDiagnostics,
+} from "../src/lib/mirro/body-mvs";
 import {
   BODY_VIEW_ANGLE_RAD,
   BODY_VIEW_SEQUENCE,
@@ -247,6 +250,13 @@ describe("classical multi-view stereo + TSDF", () => {
     >;
 
     const hull = syntheticHull();
+    const diagnostics: MultiViewStereoDiagnostics = {
+      validDepthCount: 0,
+      meanConfidence: 0,
+      crossViewConsistency: 0,
+      surfaceTriangleCount: 0,
+      rejection: "none",
+    };
     const mvs = buildClassicalMultiViewStereo({
       hull,
       images: Object.fromEntries(
@@ -263,9 +273,13 @@ describe("classical multi-view stereo + TSDF", () => {
       ) as Record<BodyViewId, Uint8Array>,
       silhouettes,
       bodyHeightCm: BODY_HEIGHT_CM,
+      diagnostics,
     });
 
-    expect(mvs).not.toBeNull();
+    expect(
+      mvs,
+      `MVS diagnostics: ${JSON.stringify(diagnostics)}`,
+    ).not.toBeNull();
     if (!mvs) return;
 
     expect(mvs.projectionModel).toBe("metric-orthographic");

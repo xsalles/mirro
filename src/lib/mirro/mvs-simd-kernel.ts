@@ -31,15 +31,132 @@ type SimdExports = {
     a2: number,
     a3: number,
   ): number;
+  zncc9(...values: number[]): number;
+  stddev9(...values: number[]): number;
+  weightedMean8(...values: number[]): number;
+  weightSum8(...values: number[]): number;
 };
 
 let simdExports: SimdExports | null = null;
+let hotPathEnabled = false;
+let benchmarkRatio: number | null = null;
 let initialization:
-  | Promise<"wasm-simd-v1" | "js-scalar">
+  | Promise<
+      | "wasm-simd-hotpath-v2"
+      | "js-scalar"
+    >
   | null = null;
 
+function jsPatchStatistics(
+  a: number[],
+  b: number[],
+) {
+  const length = Math.min(a.length, b.length);
+  if (!length) {
+    return { zncc: 0, textureEnergy: 0 };
+  }
+
+  let sumA = 0;
+  let sumB = 0;
+  let dot = 0;
+  let squareA = 0;
+  let squareB = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    const av = a[index];
+    const bv = b[index];
+    sumA += av;
+    sumB += bv;
+    dot += av * bv;
+    squareA += av * av;
+    squareB += bv * bv;
+  }
+
+  const meanA = sumA / length;
+  const meanB = sumB / length;
+  const covariance =
+    dot - length * meanA * meanB;
+  const varianceA = Math.max(
+    0,
+    squareA - length * meanA * meanA,
+  );
+  const varianceB = Math.max(
+    0,
+    squareB - length * meanB * meanB,
+  );
+  const denominator = Math.sqrt(
+    varianceA * varianceB,
+  );
+
+  return {
+    zncc:
+      denominator > 36
+        ? Math.max(
+            -1,
+            Math.min(1, covariance / denominator),
+          )
+        : 0,
+    textureEnergy: Math.sqrt(
+      varianceA / Math.max(1, length),
+    ),
+  };
+}
+
+function runHotPathBenchmark(exports: SimdExports) {
+  if (
+    typeof performance === "undefined" ||
+    typeof performance.now !== "function"
+  ) {
+    return { enabled: true, ratio: 1 };
+  }
+
+  const a = [
+    13, 22, 38, 51, 69, 87, 106, 122, 141,
+  ];
+  const b = [
+    15, 24, 36, 54, 67, 91, 103, 126, 139,
+  ];
+  const iterations = 2400;
+  let sink = 0;
+
+  for (let warmup = 0; warmup < 120; warmup += 1) {
+    sink += exports.zncc9(...a, ...b);
+    sink += jsPatchStatistics(a, b).zncc;
+  }
+
+  const jsStart = performance.now();
+  for (let index = 0; index < iterations; index += 1) {
+    sink += jsPatchStatistics(a, b).zncc;
+  }
+  const jsMs = Math.max(
+    0.01,
+    performance.now() - jsStart,
+  );
+
+  const wasmStart = performance.now();
+  for (let index = 0; index < iterations; index += 1) {
+    sink += exports.zncc9(...a, ...b);
+  }
+  const wasmMs = Math.max(
+    0.01,
+    performance.now() - wasmStart,
+  );
+
+  if (!Number.isFinite(sink)) {
+    return { enabled: false, ratio: Infinity };
+  }
+
+  const ratio = wasmMs / jsMs;
+  return {
+    enabled: ratio <= 1.15,
+    ratio,
+  };
+}
+
 export async function initializeMvsSimdKernel() {
-  if (simdExports) return "wasm-simd-v1" as const;
+  if (simdExports && hotPathEnabled) {
+    return "wasm-simd-hotpath-v2" as const;
+  }
   if (initialization) return initialization;
 
   initialization = (async () => {
@@ -74,14 +191,29 @@ export async function initializeMvsSimdKernel() {
         typeof exports.dot4 !== "function" ||
         typeof exports.sumSquares4 !== "function" ||
         typeof exports.weightedSum4 !== "function" ||
-        typeof exports.sum4 !== "function"
+        typeof exports.sum4 !== "function" ||
+        typeof exports.zncc9 !== "function" ||
+        typeof exports.stddev9 !== "function" ||
+        typeof exports.weightedMean8 !== "function" ||
+        typeof exports.weightSum8 !== "function"
       ) {
         return "js-scalar" as const;
       }
 
       simdExports = exports as SimdExports;
-      return "wasm-simd-v1" as const;
+      const benchmark = runHotPathBenchmark(
+        simdExports,
+      );
+      hotPathEnabled = benchmark.enabled;
+      benchmarkRatio = benchmark.ratio;
+
+      return hotPathEnabled
+        ? ("wasm-simd-hotpath-v2" as const)
+        : ("js-scalar" as const);
     } catch {
+      simdExports = null;
+      hotPathEnabled = false;
+      benchmarkRatio = null;
       return "js-scalar" as const;
     }
   })();
@@ -90,9 +222,32 @@ export async function initializeMvsSimdKernel() {
 }
 
 export function getMvsNumericBackend() {
-  return simdExports
-    ? ("wasm-simd-v1" as const)
+  return simdExports && hotPathEnabled
+    ? ("wasm-simd-hotpath-v2" as const)
     : ("js-scalar" as const);
+}
+
+export function getMvsSimdBenchmarkRatio() {
+  return benchmarkRatio;
+}
+
+export function patchStatistics(
+  a: number[],
+  b: number[],
+) {
+  if (
+    simdExports &&
+    hotPathEnabled &&
+    a.length === 9 &&
+    b.length === 9
+  ) {
+    return {
+      zncc: simdExports.zncc9(...a, ...b),
+      textureEnergy: simdExports.stddev9(...a),
+    };
+  }
+
+  return jsPatchStatistics(a, b);
 }
 
 export function dotProduct(
@@ -103,7 +258,7 @@ export function dotProduct(
   let sum = 0;
   let index = 0;
 
-  if (simdExports) {
+  if (simdExports && hotPathEnabled) {
     for (; index + 3 < length; index += 4) {
       sum += simdExports.dot4(
         a[index],
@@ -128,7 +283,7 @@ export function sumSquares(values: number[]) {
   let sum = 0;
   let index = 0;
 
-  if (simdExports) {
+  if (simdExports && hotPathEnabled) {
     for (; index + 3 < values.length; index += 4) {
       sum += simdExports.sumSquares4(
         values[index],
@@ -155,11 +310,37 @@ export function weightedMean(
     values.length,
     weights.length,
   );
+
+  if (
+    simdExports &&
+    hotPathEnabled &&
+    length > 0 &&
+    length <= 8
+  ) {
+    const v = new Array<number>(8).fill(0);
+    const w = new Array<number>(8).fill(0);
+    for (let index = 0; index < length; index += 1) {
+      v[index] = values[index];
+      w[index] = weights[index];
+    }
+    const weightSum = simdExports.weightSum8(...w);
+    return {
+      value:
+        weightSum > 0
+          ? simdExports.weightedMean8(
+              ...v,
+              ...w,
+            )
+          : 0,
+      weightSum,
+    };
+  }
+
   let weighted = 0;
   let weightSum = 0;
   let index = 0;
 
-  if (simdExports) {
+  if (simdExports && hotPathEnabled) {
     for (; index + 3 < length; index += 4) {
       weighted += simdExports.weightedSum4(
         values[index],
@@ -186,7 +367,8 @@ export function weightedMean(
   }
 
   return {
-    value: weightSum > 0 ? weighted / weightSum : 0,
+    value:
+      weightSum > 0 ? weighted / weightSum : 0,
     weightSum,
   };
 }

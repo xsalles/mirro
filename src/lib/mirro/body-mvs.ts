@@ -2028,8 +2028,8 @@ function buildTsdf(params: {
           continue;
         }
 
-        let sum = 0;
-        let weightSum = 0;
+        const contributions: number[] = [];
+        const contributionWeights: number[] = [];
 
         const radialAngle = Math.atan2(x, z);
         for (const viewId of BODY_VIEW_SEQUENCE) {
@@ -2072,13 +2072,18 @@ function buildTsdf(params: {
           const weight =
             sample.confidence *
             sample.confidence;
-          sum += contribution * weight;
-          weightSum += weight;
+          contributions.push(contribution);
+          contributionWeights.push(weight);
         }
 
+        const reduced = weightedMean(
+          contributions,
+          contributionWeights,
+        );
+        const weightSum = reduced.weightSum;
         const fused =
           weightSum >= 0.24
-            ? sum / weightSum
+            ? reduced.value
             : hullDistance;
         const conservative = Math.max(
           hullDistance,
@@ -2470,15 +2475,25 @@ export function buildClassicalMultiViewStereo(
     (view) => Boolean(cameraCandidates[view]),
   );
   const optimizedRig = usePerspective
-    ? optimizeTurntableCameras(cameraCandidates)
+    ? optimizeTurntableBundleFromSilhouettes({
+        candidates: cameraCandidates,
+        silhouettes: params.silhouettes,
+        bodyHeightCm: params.bodyHeightCm,
+      })
     : undefined;
   const activeCameras =
     optimizedRig?.cameras ?? cameraCandidates;
+  const activePoses = optimizedRig?.poses;
 
   const views = Object.fromEntries(
     BODY_VIEW_SEQUENCE.map((view) => {
       const image = params.images[view];
       const luminance = buildLuminance(image);
+      const pyramid = buildFeaturePyramid(
+        luminance,
+        image.width,
+        image.height,
+      );
       return [
         view,
         {
@@ -2486,13 +2501,13 @@ export function buildClassicalMultiViewStereo(
           mask: params.masks[view],
           silhouette: params.silhouettes[view],
           luminance,
-          gradient: buildGradientMagnitude(
-            luminance,
-            image.width,
-            image.height,
-          ),
+          gradient: pyramid[0].gradient,
+          pyramid,
           camera: usePerspective
             ? activeCameras[view]
+            : undefined,
+          pose: usePerspective
+            ? activePoses?.[view]
             : undefined,
         },
       ];
@@ -2507,6 +2522,7 @@ export function buildClassicalMultiViewStereo(
         views,
         hull: params.hull,
         bodyHeightCm: params.bodyHeightCm,
+        targetWidth: params.targetDepthWidth,
       }),
     ]),
   ) as Record<BodyViewId, BodyDepthMap>;
@@ -2589,10 +2605,16 @@ export function buildClassicalMultiViewStereo(
 
   const matchingKernel =
     getCensusPopcountKernel().backend;
+  const numericKernel = getMvsNumericBackend();
+  const isV10 =
+    optimizedRig?.metadata.version === 2 &&
+    views.front.pyramid.length >= 2;
 
   return {
-    version: 2,
-    method: "turntable-robust-subpixel-tsdf-v2",
+    version: isV10 ? 3 : 2,
+    method: isV10
+      ? "turntable-bundle-pyramid-simd-v3"
+      : "turntable-robust-subpixel-tsdf-v2",
     projectionModel: usePerspective
       ? "calibrated-turntable-perspective"
       : "metric-orthographic",
@@ -2608,11 +2630,17 @@ export function buildClassicalMultiViewStereo(
     matchingModel: "zncc-census-gradient",
     depthRefinement: "coarse-to-fine-parabolic",
     matchingKernel,
+    numericKernel,
     executionBackend:
-      matchingKernel === "wasm-popcnt32-v1"
-        ? "main-wasm"
-        : "main-js",
+      numericKernel === "wasm-simd-v1"
+        ? "main-wasm-simd"
+        : matchingKernel === "wasm-popcnt32-v1"
+          ? "main-wasm"
+          : "main-js",
     subpixelRefinedCount,
+    pyramidLevels: views.front.pyramid.length,
+    highDensityDepthWidth:
+      params.targetDepthWidth ?? 30,
     turntableRig:
       optimizedRig?.metadata ?? {
         version: 1,

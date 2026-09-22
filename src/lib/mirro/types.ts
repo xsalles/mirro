@@ -208,7 +208,11 @@ export type BodyTsdfVolume = {
 
 export type BodyMultiViewStereo = {
   version: 1;
-  method: "orthographic-turntable-zncc-tsdf-v1";
+  method: "turntable-zncc-tsdf-v1";
+  projectionModel:
+    | "metric-orthographic"
+    | "calibrated-turntable-perspective";
+  meanCameraDistanceCm?: number;
   depthMaps: Record<BodyViewId, BodyDepthMap>;
   tsdf: BodyTsdfVolume;
   surfaceVertices: number[];

@@ -13,6 +13,9 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     if (!context) return;
 
     const mesh = calibration.mesh;
+    const surface = mesh.visualHull;
+    const surfaceVertices = surface?.vertices ?? mesh.vertices;
+    const surfaceIndices = surface?.indices ?? mesh.indices;
     const width = canvas.width;
     const height = canvas.height;
     const rootStyle = getComputedStyle(document.documentElement);
@@ -44,9 +47,9 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
 
     function project(vertexIndex: number) {
       const offset = vertexIndex * 3;
-      const x = mesh.vertices[offset] ?? 0;
-      const y = mesh.vertices[offset + 1] ?? 0;
-      const z = mesh.vertices[offset + 2] ?? 0;
+      const x = surfaceVertices[offset] ?? 0;
+      const y = surfaceVertices[offset + 1] ?? 0;
+      const z = surfaceVertices[offset + 2] ?? 0;
       const rotatedX = x * cos + z * sin;
       return {
         x: width / 2 + rotatedX * scale,
@@ -58,11 +61,15 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     context.globalAlpha = 0.34;
     context.lineWidth = 0.55;
 
-    const stride = mesh.version >= 2 ? 2 : 1;
-    for (let offset = 0; offset < mesh.indices.length; offset += 3 * stride) {
-      const a = project(mesh.indices[offset]);
-      const b = project(mesh.indices[offset + 1]);
-      const c = project(mesh.indices[offset + 2]);
+    const stride = surface ? 5 : mesh.version >= 2 ? 2 : 1;
+    for (
+      let offset = 0;
+      offset < surfaceIndices.length;
+      offset += 3 * stride
+    ) {
+      const a = project(surfaceIndices[offset]);
+      const b = project(surfaceIndices[offset + 1]);
+      const c = project(surfaceIndices[offset + 2]);
       context.beginPath();
       context.moveTo(a.x, a.y);
       context.lineTo(b.x, b.y);
@@ -91,7 +98,9 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     context.font = "600 11px Manrope, sans-serif";
     context.textAlign = "right";
     context.fillText(
-      `${mesh.boundsCm.height.toFixed(0)} cm · v${mesh.version}`,
+      surface
+        ? `${mesh.boundsCm.height.toFixed(0)} cm · visual hull ${(surface.indices.length / 3).toLocaleString("pt-BR")} tri`
+        : `${mesh.boundsCm.height.toFixed(0)} cm · v${mesh.version}`,
       width - 16,
       20,
     );
@@ -107,8 +116,10 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.mesh.version === 4
-          ? "BodyMesh v4: torso 96×48 com linha central frente–costas derivada das laterais; UV e colisão acompanham a assimetria observada."
+        {calibration.mesh.visualHull
+          ? "Visual hull v6: volume esculpido pelas quatro máscaras completas e superfície extraída por marching tetrahedra com suavização Taubin."
+          : calibration.mesh.version === 4
+            ? "BodyMesh v4: torso 96×48 com linha central frente–costas derivada das laterais; UV e colisão acompanham a assimetria observada."
           : calibration.mesh.version === 3
             ? "BodyMesh v3 métrico: anatomia por partes com escala por alvo A4 e medidas avançadas quando informadas."
             : calibration.mesh.version === 2

@@ -1954,6 +1954,238 @@ function regularizeDepthMap(map: BodyDepthMap) {
 }
 
 
+function edgeAwareUpsampleDepthMap(
+  map: BodyDepthMap,
+  view: MvsView,
+) {
+  if (
+    map.validCount < 2 ||
+    view.bundleAccepted === false
+  ) {
+    return map;
+  }
+
+  const targetWidth = clamp(
+    Math.round(map.width * 1.45),
+    map.width,
+    72,
+  );
+  const targetHeight = Math.max(
+    map.height,
+    Math.round(
+      map.height * (targetWidth / map.width),
+    ),
+  );
+  if (
+    targetWidth === map.width &&
+    targetHeight === map.height
+  ) {
+    return map;
+  }
+
+  const depthValues = new Int16Array(
+    targetWidth * targetHeight,
+  );
+  depthValues.fill(INVALID_DEPTH);
+  const confidence = new Uint8Array(
+    targetWidth * targetHeight,
+  );
+  let validCount = 0;
+  let confidenceSum = 0;
+  let propagatedCount = 0;
+
+  for (let ty = 0; ty < targetHeight; ty += 1) {
+    const pixelY =
+      view.silhouette.bounds.y +
+      ((ty + 0.5) / targetHeight) *
+        view.silhouette.bounds.height;
+    const sourceY =
+      ((pixelY - view.silhouette.bounds.y) /
+        Math.max(1, view.silhouette.bounds.height)) *
+        map.height -
+      0.5;
+
+    for (let tx = 0; tx < targetWidth; tx += 1) {
+      const pixelX =
+        view.silhouette.bounds.x +
+        ((tx + 0.5) / targetWidth) *
+          view.silhouette.bounds.width;
+      if (!maskContains(view, pixelX, pixelY)) {
+        continue;
+      }
+
+      const centerLuma = bilinear(
+        view.luminance,
+        view.image.width,
+        view.image.height,
+        pixelX,
+        pixelY,
+      );
+      const centerGradient = bilinear(
+        view.gradient,
+        view.image.width,
+        view.image.height,
+        pixelX,
+        pixelY,
+      );
+      if (
+        centerLuma === null ||
+        centerGradient === null
+      ) {
+        continue;
+      }
+
+      const sourceX =
+        ((pixelX - view.silhouette.bounds.x) /
+          Math.max(1, view.silhouette.bounds.width)) *
+          map.width -
+        0.5;
+      const baseX = Math.round(sourceX);
+      const baseY = Math.round(sourceY);
+      let weightedDepth = 0;
+      let weightSum = 0;
+      let confidenceWeighted = 0;
+      let support = 0;
+      let minDepth = Infinity;
+      let maxDepth = -Infinity;
+      let nearestWasValid = false;
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const sx = baseX + dx;
+          const sy = baseY + dy;
+          if (
+            sx < 0 ||
+            sy < 0 ||
+            sx >= map.width ||
+            sy >= map.height
+          ) {
+            continue;
+          }
+          const sourceIndex = sy * map.width + sx;
+          const depth = decodeDepth(map, sourceIndex);
+          const sourceConfidence =
+            map.confidence[sourceIndex] / 255;
+          if (
+            depth === null ||
+            sourceConfidence < 0.08
+          ) {
+            continue;
+          }
+
+          const sourcePixelX =
+            view.silhouette.bounds.x +
+            ((sx + 0.5) / map.width) *
+              view.silhouette.bounds.width;
+          const sourcePixelY =
+            view.silhouette.bounds.y +
+            ((sy + 0.5) / map.height) *
+              view.silhouette.bounds.height;
+          const luma = bilinear(
+            view.luminance,
+            view.image.width,
+            view.image.height,
+            sourcePixelX,
+            sourcePixelY,
+          );
+          const gradient = bilinear(
+            view.gradient,
+            view.image.width,
+            view.image.height,
+            sourcePixelX,
+            sourcePixelY,
+          );
+          if (luma === null || gradient === null) {
+            continue;
+          }
+
+          const spatialDistance = Math.hypot(
+            sx - sourceX,
+            sy - sourceY,
+          );
+          const spatialWeight = Math.exp(
+            -spatialDistance * spatialDistance * 0.72,
+          );
+          const appearanceWeight = Math.exp(
+            -Math.abs(luma - centerLuma) / 20,
+          );
+          const edgeWeight = Math.exp(
+            -Math.abs(gradient - centerGradient) / 24,
+          );
+          const weight =
+            spatialWeight *
+            appearanceWeight *
+            edgeWeight *
+            sourceConfidence;
+          if (weight < 0.008) continue;
+
+          weightedDepth += depth * weight;
+          confidenceWeighted +=
+            sourceConfidence * weight;
+          weightSum += weight;
+          support += 1;
+          minDepth = Math.min(minDepth, depth);
+          maxDepth = Math.max(maxDepth, depth);
+          if (
+            sx === Math.round(sourceX) &&
+            sy === Math.round(sourceY)
+          ) {
+            nearestWasValid = true;
+          }
+        }
+      }
+
+      if (
+        support < 2 ||
+        weightSum < 0.1 ||
+        maxDepth - minDepth > 2.4
+      ) {
+        continue;
+      }
+
+      const denseDepth = weightedDepth / weightSum;
+      const denseConfidence = clamp(
+        (confidenceWeighted / weightSum) *
+          (nearestWasValid ? 0.96 : 0.72) *
+          clamp(support / 5, 0.45, 1),
+        0,
+        1,
+      );
+      if (denseConfidence < 0.1) continue;
+
+      const targetIndex =
+        ty * targetWidth + tx;
+      depthValues[targetIndex] =
+        quantizeDepth(denseDepth);
+      confidence[targetIndex] = Math.round(
+        denseConfidence * 255,
+      );
+      validCount += 1;
+      confidenceSum += denseConfidence;
+      if (!nearestWasValid) {
+        propagatedCount += 1;
+      }
+    }
+  }
+
+  return {
+    ...map,
+    version: 3 as const,
+    method: "turntable-edge-aware-dense-v3" as const,
+    width: targetWidth,
+    height: targetHeight,
+    depthValues,
+    confidence,
+    validCount,
+    meanConfidence:
+      validCount > 0
+        ? confidenceSum / validCount
+        : 0,
+    propagatedCount,
+    sourceWidth: map.width,
+  };
+}
+
 function enforceCrossViewConsistency(params: {
   maps: Record<BodyViewId, BodyDepthMap>;
   views: Record<BodyViewId, MvsView>;
@@ -2704,14 +2936,31 @@ export function buildClassicalMultiViewStereo(
     regularizeDepthMap(depthMaps[view]);
   }
 
+  enforceCrossViewConsistency({
+    maps: depthMaps,
+    views,
+    bodyHeightCm: params.bodyHeightCm,
+    toleranceCm: Math.max(
+      1.4,
+      params.hull.voxelSizeCm * 0.85,
+    ),
+  });
+
+  for (const view of BODY_VIEW_SEQUENCE) {
+    depthMaps[view] = edgeAwareUpsampleDepthMap(
+      depthMaps[view],
+      views[view],
+    );
+  }
+
   const crossViewConsistency =
     enforceCrossViewConsistency({
       maps: depthMaps,
       views,
       bodyHeightCm: params.bodyHeightCm,
       toleranceCm: Math.max(
-        1.4,
-        params.hull.voxelSizeCm * 0.85,
+        1.2,
+        params.hull.voxelSizeCm * 0.78,
       ),
     });
 

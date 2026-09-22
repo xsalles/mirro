@@ -604,6 +604,10 @@ function optimizeTurntableBundleFromSilhouettes(params: {
     maxIterations: 7,
   });
 
+  if (!solved.axisVerticalValidation.valid) {
+    return initial;
+  }
+
   const cameras = Object.fromEntries(
     BODY_VIEW_SEQUENCE.map((view) => [
       view,

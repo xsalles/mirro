@@ -2,9 +2,9 @@
 
 ## Canonical operations
 
-- **Save body:** validate client-side, resolve all four local images, extract four silhouettes, generate BodyMesh, then persist media + profile only after calibration succeeds. Keep the previous saved profile untouched on calibration failure.
+- **Save body:** validate client-side, resolve all four local images, detect the optional MIRRO A4 target, extract silhouettes, generate BodyMesh v3 only when all four metric views are valid (otherwise v2 fallback), then persist media + profile only after calibration succeeds. Keep the previous saved profile untouched on failure.
 - **Replace body view:** allows replacing one or more views. Any changed photo or measurement makes the previous calibration stale until the user explicitly recalibrates.
-- **Add garment:** validate name + two images, remove their backgrounds locally, calibrate front/back alpha silhouettes, persist media + calibration metadata, then clear only the new-item form.
+- **Add garment:** validate name + two images + physical fabric profile, remove backgrounds locally, calibrate front/back alpha silhouettes, persist media/calibration/fabric metadata, then clear only the new-item form. Weight/stretch presets may prefill the physical profile, but the stored values are the solver source of truth for new garments.
 - **Delete garment:** is irreversible within the current local dataset. The delete affordance is explicit, scoped to one garment, and requires an app-owned confirmation naming the consequence.
 - **Physical try-on:** ensure an anatomical BodyMesh v2 (upgrade legacy v1 calibration in memory when needed), build a fresh semantic runtime GarmentMesh, simulate locally with anatomical body + garment self-collision, then render the saved front/back garment textures over solved UV regions. Never mutate source garment media.
 - **Legacy garment:** if a previously saved garment has no calibration metadata, derive calibration on demand from its stored processed PNGs.
@@ -13,9 +13,9 @@
 ## State and storage
 
 - IndexedDB is the canonical MVP owner for profile metadata and media blobs.
-- Body calibration metadata and BodyMesh arrays are local IndexedDB state. New calibrations persist BodyMesh v2; legacy v1 profiles remain readable.
+- Body calibration metadata, target calibration, advanced measurements and BodyMesh arrays are local IndexedDB state. New fully targeted calibrations persist BodyMesh v3; v2/v1 remain readable.
 - Garment alpha calibration is local metadata; XPBD mesh positions are runtime-only and are regenerated when the user changes garment or requests re-simulation.
-- No body or garment image is sent over the network in the current milestone.
+- No body or garment image, metric target result or fabric profile is sent over the network in the current milestone.
 - Body calibration reports honest named stages.
 - XPBD uses determinate progress because the current solver runs a known 144-step budget. The preferred execution owner is a Web Worker; if worker startup fails, the same simulation contract falls back locally without changing user inputs.
 - Simulation errors keep the selected garment and expose an explicit retry.

@@ -1164,7 +1164,12 @@ export function buildBodyCalibration(
     crotchRing: clamp(Math.round(sampleCount * 0.63), 4, sampleCount - 2),
   };
 
-  const meshVersion: 2 | 4 = lateralCenter ? 4 : 2;
+  const meshVersion: 2 | 3 | 4 =
+    hasMetricTarget && lateralCenter
+      ? 4
+      : hasMetricTarget
+        ? 3
+        : 2;
   const mesh = buildAnatomicalMesh(
     radiusX,
     radiusZ,

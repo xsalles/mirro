@@ -2918,11 +2918,13 @@ export function buildClassicalMultiViewStereo(
       ),
     });
 
-  for (const view of BODY_VIEW_SEQUENCE) {
-    depthMaps[view] = edgeAwareUpsampleDepthMap(
-      depthMaps[view],
-      views[view],
-    );
+  if (optimizedRig?.metadata.version === 3) {
+    for (const view of BODY_VIEW_SEQUENCE) {
+      depthMaps[view] = edgeAwareUpsampleDepthMap(
+        depthMaps[view],
+        views[view],
+      );
+    }
   }
 
   let validDepthCount = 0;

@@ -1008,7 +1008,24 @@ function robustPatchScore(params: {
   centerPixelX: number;
   centerPixelY: number;
   candidateDepthCm: number;
+  pyramidLevel?: number;
 }) {
+  const referenceLevel =
+    params.reference.pyramid[
+      Math.min(
+        params.pyramidLevel ?? 0,
+        params.reference.pyramid.length - 1,
+      )
+    ];
+  const targetLevel =
+    params.target.pyramid[
+      Math.min(
+        params.pyramidLevel ?? 0,
+        params.target.pyramid.length - 1,
+      )
+    ];
+  const offsetScale =
+    1 / Math.max(1e-6, referenceLevel.scale);
   const referenceCenterCoordinate =
     pixelToViewCoordinates(
       params.reference,
@@ -1049,18 +1066,18 @@ function robustPatchScore(params: {
   }
 
   const refCenter = bilinear(
-    params.reference.luminance,
-    params.reference.image.width,
-    params.reference.image.height,
-    params.centerPixelX,
-    params.centerPixelY,
+    referenceLevel.luminance,
+    referenceLevel.width,
+    referenceLevel.height,
+    params.centerPixelX * referenceLevel.scale,
+    params.centerPixelY * referenceLevel.scale,
   );
   const targetCenterValue = bilinear(
-    params.target.luminance,
-    params.target.image.width,
-    params.target.image.height,
-    targetCenter.x,
-    targetCenter.y,
+    targetLevel.luminance,
+    targetLevel.width,
+    targetLevel.height,
+    targetCenter.x * targetLevel.scale,
+    targetCenter.y * targetLevel.scale,
   );
   if (
     refCenter === null ||
@@ -1078,8 +1095,10 @@ function robustPatchScore(params: {
   let gradientSamples = 0;
 
   for (const [dx, dy] of PATCH_OFFSETS) {
-    const refX = params.centerPixelX + dx;
-    const refY = params.centerPixelY + dy;
+    const refX =
+      params.centerPixelX + dx * offsetScale;
+    const refY =
+      params.centerPixelY + dy * offsetScale;
     if (!maskContains(params.reference, refX, refY)) {
       continue;
     }
@@ -1118,18 +1137,18 @@ function robustPatchScore(params: {
     }
 
     const a = bilinear(
-      params.reference.luminance,
-      params.reference.image.width,
-      params.reference.image.height,
-      refX,
-      refY,
+      referenceLevel.luminance,
+      referenceLevel.width,
+      referenceLevel.height,
+      refX * referenceLevel.scale,
+      refY * referenceLevel.scale,
     );
     const b = bilinear(
-      params.target.luminance,
-      params.target.image.width,
-      params.target.image.height,
-      projected.x,
-      projected.y,
+      targetLevel.luminance,
+      targetLevel.width,
+      targetLevel.height,
+      projected.x * targetLevel.scale,
+      projected.y * targetLevel.scale,
     );
     if (a === null || b === null) continue;
 
@@ -1137,18 +1156,18 @@ function robustPatchScore(params: {
     targetValues.push(b);
 
     const refGradient = bilinear(
-      params.reference.gradient,
-      params.reference.image.width,
-      params.reference.image.height,
-      refX,
-      refY,
+      referenceLevel.gradient,
+      referenceLevel.width,
+      referenceLevel.height,
+      refX * referenceLevel.scale,
+      refY * referenceLevel.scale,
     );
     const targetGradient = bilinear(
-      params.target.gradient,
-      params.target.image.width,
-      params.target.image.height,
-      projected.x,
-      projected.y,
+      targetLevel.gradient,
+      targetLevel.width,
+      targetLevel.height,
+      projected.x * targetLevel.scale,
+      projected.y * targetLevel.scale,
     );
     if (
       refGradient !== null &&
@@ -1188,17 +1207,18 @@ function robustPatchScore(params: {
   meanA /= refValues.length;
   meanB /= targetValues.length;
 
-  let covariance = 0;
-  let varianceA = 0;
-  let varianceB = 0;
-
-  for (let index = 0; index < refValues.length; index += 1) {
-    const da = refValues[index] - meanA;
-    const db = targetValues[index] - meanB;
-    covariance += da * db;
-    varianceA += da * da;
-    varianceB += db * db;
-  }
+  const centeredA = refValues.map(
+    (value) => value - meanA,
+  );
+  const centeredB = targetValues.map(
+    (value) => value - meanB,
+  );
+  const covariance = dotProduct(
+    centeredA,
+    centeredB,
+  );
+  const varianceA = sumSquares(centeredA);
+  const varianceB = sumSquares(centeredB);
 
   const denominator = Math.sqrt(
     varianceA * varianceB,
@@ -1242,6 +1262,7 @@ function scoreCandidate(params: {
   pixelX: number;
   pixelY: number;
   depthCm: number;
+  pyramidLevel?: number;
 }) {
   const scores: number[] = [];
 
@@ -1260,6 +1281,7 @@ function scoreCandidate(params: {
         centerPixelX: params.pixelX,
         centerPixelY: params.pixelY,
         candidateDepthCm: params.depthCm,
+        pyramidLevel: params.pyramidLevel,
       });
       if (score !== null) scores.push(score);
     }
@@ -1332,16 +1354,21 @@ function createRawDepthMap(params: {
   views: Record<BodyViewId, MvsView>;
   hull: BodyVisualHull;
   bodyHeightCm: number;
+  targetWidth?: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 30;
+  const width = clamp(
+    Math.round(params.targetWidth ?? 30),
+    28,
+    48,
+  );
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    54,
-    80,
+    Math.round(width * 1.8),
+    Math.round(width * 2.7),
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);
@@ -1428,6 +1455,7 @@ function createRawDepthMap(params: {
           pixelX,
           pixelY,
           depthCm: candidateDepth,
+          pyramidLevel: 2,
         });
       };
 
@@ -1458,7 +1486,42 @@ function createRawDepthMap(params: {
       ];
 
       for (const depth of fineDepths) {
-        const score = evaluateDepth(depth);
+        const coordinate = pixelToViewCoordinates(
+          reference,
+          params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          depth,
+        );
+        const world = viewCoordinatesToWorld(
+          params.view,
+          coordinate.horizontalCm,
+          coordinate.y,
+          depth,
+          reference.pose,
+        );
+        const sdf = params.hull.signedDistanceField;
+        if (
+          sdf &&
+          sampleSignedDistance(
+            sdf,
+            world[0],
+            world[1],
+            world[2],
+          ) > 0.3
+        ) {
+          continue;
+        }
+
+        const score = scoreCandidate({
+          referenceView: params.view,
+          views: params.views,
+          bodyHeightCm: params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          depthCm: depth,
+          pyramidLevel: 1,
+        });
         if (score !== null && score > bestScore) {
           bestDepth = depth;
           bestScore = score;
@@ -1466,10 +1529,29 @@ function createRawDepthMap(params: {
       }
 
       const subpixelStepCm = 0.16;
-      const minusScore = evaluateDepth(
+      const evaluateFullResolution = (
+        candidateDepth: number,
+      ) =>
+        scoreCandidate({
+          referenceView: params.view,
+          views: params.views,
+          bodyHeightCm: params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          depthCm: candidateDepth,
+          pyramidLevel: 0,
+        });
+
+      const centerFineScore =
+        evaluateFullResolution(bestDepth);
+      if (centerFineScore !== null) {
+        bestScore = centerFineScore;
+      }
+
+      const minusScore = evaluateFullResolution(
         bestDepth - subpixelStepCm,
       );
-      const plusScore = evaluateDepth(
+      const plusScore = evaluateFullResolution(
         bestDepth + subpixelStepCm,
       );
 
@@ -1487,7 +1569,8 @@ function createRawDepthMap(params: {
 
         if (Math.abs(correction) > 0) {
           const refinedDepth = bestDepth + correction;
-          const refinedScore = evaluateDepth(refinedDepth);
+          const refinedScore =
+            evaluateFullResolution(refinedDepth);
 
           if (
             refinedScore !== null &&
@@ -2341,6 +2424,7 @@ export type BodyMvsBuildInput = {
   bodyHeightCm: number;
   optics?: OpticalCalibrationProfile;
   diagnostics?: MultiViewStereoDiagnostics;
+  targetDepthWidth?: number;
 };
 
 export function buildClassicalMultiViewStereo(

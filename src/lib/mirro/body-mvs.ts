@@ -724,14 +724,14 @@ function createRawDepthMap(params: {
   bodyHeightCm: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 28;
+  const width = 30;
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    52,
-    74,
+    54,
+    80,
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);

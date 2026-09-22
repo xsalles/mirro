@@ -398,8 +398,10 @@ export default function BodyPage() {
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
-              {calibration.version === 9
-                ? "Scanner robusto v9 pronto"
+              {calibration.version === 10
+                ? "Scanner bundle v10 pronto"
+                : calibration.version === 9
+                  ? "Scanner robusto v9 pronto"
                 : calibration.version === 8
                   ? "Scanner MVS v8 pronto"
                 : calibration.version === 7
@@ -413,8 +415,10 @@ export default function BodyPage() {
                   : "BodyMesh anatômico pronto"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 9 && mvs
-                ? `MVS robusto ativo: ZNCC + Census + gradiente, busca coarse-to-fine e profundidade subpixel. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram aos filtros; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
+              {calibration.version === 10 && mvs
+                ? `MVS v10 ativo: bundle da turntable com ângulo por frame/eixo inclinado, pirâmide multi-resolução e reduções WASM SIMD quando suportadas. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
+                : calibration.version === 9 && mvs
+                  ? `MVS robusto ativo: ZNCC + Census + gradiente, busca coarse-to-fine e profundidade subpixel. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram aos filtros; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
                 : calibration.version === 8 && mvs
                   ? `MVS clássico ativo: 8 depth maps por ZNCC, consistência entre vistas e fusão TSDF. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras de profundidade sobreviveram aos filtros; o SDF do visual hull continua sendo o envelope físico da roupa.`
                 : calibration.version === 7 && calibration.mesh.visualHull?.signedDistanceField
@@ -430,7 +434,7 @@ export default function BodyPage() {
                   : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-15">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-18">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -477,6 +481,28 @@ export default function BodyPage() {
                   {mvs?.turntableRig?.optimized
                     ? `${mvs.turntableRig.centerResidualCm.toFixed(2)} cm RMS`
                     : "fallback"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Pirâmide / depth</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs
+                    ? `${mvs.pyramidLevels ?? 1} níveis · ${mvs.highDensityDepthWidth ?? 30}px`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">SIMD numérico</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs?.numericKernel ?? "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Bundle turntable</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs?.turntableRig?.version === 2
+                    ? `${(mvs.turntableRig.axisTiltDeg ?? 0).toFixed(2)}° tilt · ${(mvs.turntableRig.bundleResidualCm ?? 0).toFixed(2)} cm RMS`
+                    : "—"}
                 </dd>
               </div>
               <div>
@@ -580,8 +606,10 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 9
-                  ? "MVS robusto, subpixel, eixo compartilhado e TSDF concluídos fora da UI quando Worker está disponível."
+                {calibration.version === 10
+                  ? "Bundle angular/tilt, pirâmide multi-resolução, SIMD numérico e TSDF concluídos no Worker quando disponível."
+                  : calibration.version === 9
+                    ? "MVS robusto, subpixel, eixo compartilhado e TSDF concluídos fora da UI quando Worker está disponível."
                   : calibration.version === 8
                     ? "Depth maps ZNCC, consistência cruzada, TSDF e superfície MVS concluídos localmente."
                   : calibration.version === 7

@@ -1145,10 +1145,8 @@ function createRawDepthMap(params: {
       let bestScore = coarse[0].score;
 
       const fineDepths = [
-        bestDepth - 0.55,
-        bestDepth - 0.28,
-        bestDepth + 0.28,
-        bestDepth + 0.55,
+        bestDepth - 0.42,
+        bestDepth + 0.42,
       ];
 
       for (const depth of fineDepths) {

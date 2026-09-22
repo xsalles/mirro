@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useMirro } from "@/components/mirro-provider";
 import { calibrateBodyFromPhotos } from "@/lib/mirro/body-image-processing";
 import { loadMedia } from "@/lib/mirro/db";
-import type { BodySide, BodyViewId, MediaRef } from "@/lib/mirro/types";
+import type { BodyViewId, MediaRef } from "@/lib/mirro/types";
 import { validMeasurement, validateImage } from "@/lib/mirro/validation";
 
 const CAPTURE_VIEWS: Array<{

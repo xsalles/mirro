@@ -58,6 +58,32 @@ function fakeSilhouette(
   };
 }
 
+function metricSilhouette(
+  profile: number[],
+  confidence = 0.94,
+): BodySilhouette {
+  const base = fakeSilhouette(profile, confidence);
+  return {
+    ...base,
+    metricWidthProfileCm: profile.map((value) => value * 178),
+    metricBodyHeightCm: 178,
+    viewCalibration: {
+      method: "mirro-a4-color-target-v1",
+      pixelsPerCm: 4,
+      rollRadians: 0,
+      perspectiveSkew: 0.02,
+      score: 0.96,
+      targetBounds: { x: 10, y: 10, width: 80, height: 120 },
+      markerCenters: {
+        magenta: [10, 10],
+        cyan: [74, 10],
+        yellow: [10, 108],
+        blue: [74, 108],
+      },
+    },
+  };
+}
+
 function shapedProfile(samples: number, side = false) {
   return Array.from({ length: samples }, (_, index) => {
     const t = index / (samples - 1);
@@ -164,4 +190,57 @@ describe("buildBodyCalibration", () => {
     expect(calibration.quality.frontBackDifference).toBeLessThan(0.01);
     expect(calibration.quality.sideDifference).toBeLessThan(0.01);
   });
+  it("activates metric v3 and uses explicit limb measurements", () => {
+    const metricMeasurements: BodyMeasurements = {
+      ...measurements,
+      shoulderWidthCm: 44,
+      armLengthCm: 62,
+      upperArmCm: 32,
+      thighCm: 58,
+      inseamCm: 82,
+    };
+
+    const metricCalibration = buildBodyCalibration(
+      {
+        front: metricSilhouette(front, 0.95),
+        back: metricSilhouette(front.map((value) => value * 0.99), 0.93),
+        left: metricSilhouette(side, 0.92),
+        right: metricSilhouette(side.map((value) => value * 1.01), 0.94),
+      },
+      metricMeasurements,
+    );
+
+    expect(metricCalibration.version).toBe(3);
+    expect(metricCalibration.method).toBe("metric-target-anatomical-v3");
+    expect(Object.keys(metricCalibration.viewCalibration ?? {})).toHaveLength(4);
+    expect(metricCalibration.mesh.version).toBe(3);
+
+    const leftArm = metricCalibration.mesh.collisionPrimitives?.find(
+      (primitive) =>
+        primitive.type === "tapered-capsule" &&
+        primitive.part === "left-arm",
+    );
+    const leftLeg = metricCalibration.mesh.collisionPrimitives?.find(
+      (primitive) =>
+        primitive.type === "tapered-capsule" &&
+        primitive.part === "left-leg",
+    );
+
+    expect(leftArm?.type).toBe("tapered-capsule");
+    expect(leftLeg?.type).toBe("tapered-capsule");
+    if (!leftArm || leftArm.type !== "tapered-capsule") throw new Error("arm missing");
+    if (!leftLeg || leftLeg.type !== "tapered-capsule") throw new Error("leg missing");
+
+    expect(Math.abs(leftArm.start[0])).toBeCloseTo(22, 0);
+    expect(leftArm.startRadius).toBeCloseTo(32 / (Math.PI * 2), 1);
+    expect(
+      Math.hypot(
+        leftArm.end[0] - leftArm.start[0],
+        leftArm.end[1] - leftArm.start[1],
+        leftArm.end[2] - leftArm.start[2],
+      ),
+    ).toBeCloseTo(62, 0);
+    expect(leftLeg.startRadius).toBeCloseTo(58 / (Math.PI * 2), 1);
+  });
+
 });

@@ -1,6 +1,7 @@
 import type {
   BodyCameraRig,
   BodySide,
+  BodySilhouette,
   BodyViewCalibration,
   CameraExtrinsics,
   CameraIntrinsics,
@@ -344,6 +345,121 @@ function refineSharedIntrinsics(
   }
 
   return { intrinsics, iterations };
+}
+
+
+function invertMat3(matrix: Mat3): Mat3 {
+  const [
+    a, b, c,
+    d, e, f,
+    g, h, i,
+  ] = matrix;
+  const aa = e * i - f * h;
+  const bb = -(d * i - f * g);
+  const cc = d * h - e * g;
+  const det = a * aa + b * bb + c * cc;
+
+  if (Math.abs(det) < 1e-12) {
+    throw new Error("Homografia sem inversa estável.");
+  }
+
+  const inv = 1 / det;
+  return [
+    aa * inv,
+    -(b * i - c * h) * inv,
+    (b * f - c * e) * inv,
+    bb * inv,
+    (a * i - c * g) * inv,
+    -(a * f - c * d) * inv,
+    cc * inv,
+    -(a * h - b * g) * inv,
+    (a * e - b * d) * inv,
+  ];
+}
+
+function transformHomogeneous(matrix: Mat3, point: Point2): Point2 {
+  const [x, y] = point;
+  const w = matrix[6] * x + matrix[7] * y + matrix[8];
+  const safeW = Math.abs(w) < 1e-10 ? 1e-10 : w;
+  return [
+    (matrix[0] * x + matrix[1] * y + matrix[2]) / safeW,
+    (matrix[3] * x + matrix[4] * y + matrix[5]) / safeW,
+  ];
+}
+
+export function rectifySilhouetteWithPinhole(
+  silhouette: BodySilhouette,
+  calibration: BodyViewCalibration,
+): BodySilhouette {
+  if (!calibration.homography) return silhouette;
+
+  let inverse: Mat3;
+  try {
+    inverse = invertMat3(calibration.homography);
+  } catch {
+    return silhouette;
+  }
+
+  const centerX = silhouette.bounds.x + silhouette.bounds.width / 2;
+  const fallback = silhouette.metricWidthProfileCm;
+  const metricWidthProfileCm = silhouette.widthProfile.map(
+    (normalizedWidth, index) => {
+      const t =
+        silhouette.widthProfile.length <= 1
+          ? 0
+          : index / (silhouette.widthProfile.length - 1);
+      const y =
+        silhouette.bounds.y +
+        t * Math.max(1, silhouette.bounds.height - 1);
+      const widthPx = normalizedWidth * silhouette.bounds.height;
+      const left = transformHomogeneous(inverse, [
+        centerX - widthPx / 2,
+        y,
+      ]);
+      const right = transformHomogeneous(inverse, [
+        centerX + widthPx / 2,
+        y,
+      ]);
+      const observed = Math.hypot(
+        right[0] - left[0],
+        right[1] - left[1],
+      );
+
+      const previous = fallback?.[index];
+      if (!Number.isFinite(observed) || observed <= 0) {
+        return previous ?? normalizedWidth * (silhouette.metricBodyHeightCm ?? 170);
+      }
+      if (previous && Number.isFinite(previous)) {
+        return clamp(observed, previous * 0.65, previous * 1.45);
+      }
+      return observed;
+    },
+  );
+
+  const top = transformHomogeneous(inverse, [
+    centerX,
+    silhouette.bounds.y,
+  ]);
+  const bottom = transformHomogeneous(inverse, [
+    centerX,
+    silhouette.bounds.y + silhouette.bounds.height - 1,
+  ]);
+  const observedHeight = Math.hypot(
+    bottom[0] - top[0],
+    bottom[1] - top[1],
+  );
+  const previousHeight = silhouette.metricBodyHeightCm;
+  const metricBodyHeightCm =
+    previousHeight && Number.isFinite(previousHeight)
+      ? clamp(observedHeight, previousHeight * 0.7, previousHeight * 1.35)
+      : observedHeight;
+
+  return {
+    ...silhouette,
+    metricWidthProfileCm,
+    metricBodyHeightCm,
+    viewCalibration: calibration,
+  };
 }
 
 export function solveBodyCameraRig(

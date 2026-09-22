@@ -46,19 +46,23 @@ function sampleProfile(profile: number[], t: number) {
   );
 }
 
-async function loadImage(url: string): Promise<SourceImage> {
+async function loadImage(
+  url: string,
+  targetWidth: number,
+  targetHeight: number,
+): Promise<SourceImage> {
   const image = new Image();
   image.decoding = "async";
   image.src = url;
   await image.decode();
 
   const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) throw new Error("Canvas 2D indisponível para textura corporal.");
 
-  context.drawImage(image, 0, 0);
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
   const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
   return { width: canvas.width, height: canvas.height, data };
 }
@@ -176,7 +180,12 @@ export async function buildBodyTextureAtlas(params: {
     SIDES.map(async (side) => {
       const url = params.urls[side];
       if (!url) return [side, null] as const;
-      const source = await loadImage(url);
+      const silhouette = params.silhouettes[side];
+      const source = await loadImage(
+        url,
+        silhouette.sourceWidth,
+        silhouette.sourceHeight,
+      );
       if (params.cameraRig?.distortion) {
         return [
           side,

@@ -206,6 +206,57 @@ function markerPairs(calibration: BodyViewCalibration) {
   }));
 }
 
+function multiplyMat3(a: Mat3, b: Mat3): Mat3 {
+  const out = new Array<number>(9).fill(0);
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      out[row * 3 + col] =
+        a[row * 3] * b[col] +
+        a[row * 3 + 1] * b[3 + col] +
+        a[row * 3 + 2] * b[6 + col];
+    }
+  }
+  return out as Mat3;
+}
+
+function deltaRotation(axis: 0 | 1 | 2, angle: number): Mat3 {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  if (axis === 0) {
+    return [
+      1, 0, 0,
+      0, c, -s,
+      0, s, c,
+    ];
+  }
+  if (axis === 1) {
+    return [
+      c, 0, s,
+      0, 1, 0,
+      -s, 0, c,
+    ];
+  }
+  return [
+    c, -s, 0,
+    s, c, 0,
+    0, 0, 1,
+  ];
+}
+
+function rotatedPose(
+  pose: CameraExtrinsics,
+  axis: 0 | 1 | 2,
+  angle: number,
+): CameraExtrinsics {
+  return {
+    rotation: multiplyMat3(
+      deltaRotation(axis, angle),
+      pose.rotation as Mat3,
+    ),
+    translation: [...pose.translation],
+  };
+}
+
 function reprojectionError(
   calibration: BodyViewCalibration,
   intrinsics: CameraIntrinsics,
@@ -221,6 +272,68 @@ function reprojectionError(
     count += 1;
   }
   return Math.sqrt(total / Math.max(1, count));
+}
+
+function refinePose(
+  calibration: BodyViewCalibration,
+  intrinsics: CameraIntrinsics,
+  initial: CameraExtrinsics,
+) {
+  let pose: CameraExtrinsics = {
+    rotation: [...initial.rotation] as CameraExtrinsics["rotation"],
+    translation: [...initial.translation],
+  };
+  let best = reprojectionError(calibration, intrinsics, pose);
+  let iterations = 0;
+  const distance = Math.max(20, pose.translation[2]);
+  const angularSteps = [0.035, 0.015, 0.006, 0.0025, 0.001];
+  const translationScales = [0.018, 0.008, 0.0035, 0.0015, 0.0007];
+
+  for (let level = 0; level < angularSteps.length; level += 1) {
+    let improved = true;
+    let pass = 0;
+
+    while (improved && pass < 8) {
+      improved = false;
+      pass += 1;
+
+      const candidates: CameraExtrinsics[] = [];
+      const angle = angularSteps[level];
+      const translationStep = distance * translationScales[level];
+
+      for (const direction of [-1, 1] as const) {
+        for (const axis of [0, 1, 2] as const) {
+          candidates.push(rotatedPose(pose, axis, angle * direction));
+        }
+
+        for (const axis of [0, 1, 2] as const) {
+          const translation = [...pose.translation] as [number, number, number];
+          translation[axis] += translationStep * direction;
+          if (axis === 2) translation[2] = Math.max(5, translation[2]);
+          candidates.push({
+            rotation: [...pose.rotation] as CameraExtrinsics["rotation"],
+            translation,
+          });
+        }
+      }
+
+      for (const candidate of candidates) {
+        iterations += 1;
+        const error = reprojectionError(
+          calibration,
+          intrinsics,
+          candidate,
+        );
+        if (error + 1e-8 < best) {
+          best = error;
+          pose = candidate;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return { pose, error: best, iterations };
 }
 
 function orthonormalityResidual(
@@ -490,17 +603,21 @@ export function solveBodyCameraRig(
   const views = {} as BodyCameraRig["views"];
   const updated = {} as Record<BodySide, BodyViewCalibration>;
   let squaredError = 0;
+  let poseIterations = 0;
 
   for (const side of SIDES) {
-    const extrinsics = decomposeHomography(
+    const initialExtrinsics = decomposeHomography(
       homographies[side],
       intrinsics,
     );
-    const error = reprojectionError(
+    const refined = refinePose(
       calibrations[side],
       intrinsics,
-      extrinsics,
+      initialExtrinsics,
     );
+    const extrinsics = refined.pose;
+    const error = refined.error;
+    poseIterations += refined.iterations;
     squaredError += error * error;
     views[side] = {
       ...extrinsics,
@@ -552,7 +669,7 @@ export function solveBodyCameraRig(
       intrinsics,
       views,
       rmsReprojectionErrorPx,
-      iterations,
+      iterations: iterations + poseIterations,
       conditionScore,
       warnings,
     },

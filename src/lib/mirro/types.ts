@@ -19,12 +19,38 @@ export type BodyMeasurements = {
   inseamCm?: number;
 };
 
+export type CameraIntrinsics = {
+  fx: number;
+  fy: number;
+  cx: number;
+  cy: number;
+  skew: number;
+};
+
+export type CameraExtrinsics = {
+  rotation: [
+    number, number, number,
+    number, number, number,
+    number, number, number
+  ];
+  translation: [number, number, number];
+};
+
 export type BodyViewCalibration = {
-  method: "mirro-a4-color-target-v1";
+  method: "mirro-a4-color-target-v1" | "mirro-a4-pinhole-v2";
   pixelsPerCm: number;
   rollRadians: number;
   perspectiveSkew: number;
   score: number;
+  imageWidth?: number;
+  imageHeight?: number;
+  homography?: [
+    number, number, number,
+    number, number, number,
+    number, number, number
+  ];
+  extrinsics?: CameraExtrinsics;
+  reprojectionErrorPx?: number;
   targetBounds: {
     x: number;
     y: number;
@@ -37,6 +63,32 @@ export type BodyViewCalibration = {
     yellow: [number, number];
     blue: [number, number];
   };
+};
+
+export type BodyCameraRig = {
+  version: 1;
+  method: "shared-pinhole-bundle-v1";
+  intrinsics: CameraIntrinsics;
+  views: Record<BodySide, CameraExtrinsics & {
+    reprojectionErrorPx: number;
+    homography: [
+      number, number, number,
+      number, number, number,
+      number, number, number
+    ];
+  }>;
+  rmsReprojectionErrorPx: number;
+  iterations: number;
+  conditionScore: number;
+  warnings: string[];
+};
+
+export type BodyTextureCalibration = {
+  version: 1;
+  method: "log-luminance-rgb-gain-v1";
+  gains: Record<BodySide, [number, number, number]>;
+  meanLuminance: Record<BodySide, number>;
+  score: number;
 };
 
 export type BodySilhouette = {
@@ -132,15 +184,18 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
-    | "metric-target-anatomical-v3";
+    | "metric-target-anatomical-v3"
+    | "pinhole-bundle-anatomical-v4";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   mesh: BodyMesh;
   viewCalibration?: Partial<Record<BodySide, BodyViewCalibration>>;
+  cameraRig?: BodyCameraRig;
+  textureCalibration?: BodyTextureCalibration;
   quality: {
     score: number;
     frontBackDifference: number;
@@ -200,6 +255,16 @@ export type GarmentCalibration = {
   createdAt: string;
 };
 
+export type FabricLibraryEntry = {
+  id: string;
+  name: string;
+  family: string;
+  composition: string;
+  source: "engineering-preset";
+  profile: FabricPhysicalProfile;
+  notes: string;
+};
+
 export type Garment = {
   id: string;
   name: string;
@@ -213,6 +278,7 @@ export type Garment = {
   };
   calibration?: GarmentCalibration;
   physicalProfile?: FabricPhysicalProfile;
+  fabricLibraryId?: string;
   createdAt: string;
 };
 

@@ -234,6 +234,8 @@ export function detectBodyViewCalibration(
   return {
     method: "mirro-a4-color-target-v1",
     pixelsPerCm,
+    imageWidth: image.width,
+    imageHeight: image.height,
     rollRadians,
     perspectiveSkew,
     score,

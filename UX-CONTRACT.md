@@ -2,9 +2,9 @@
 
 ## Canonical operations
 
-- **Save body:** validate client-side, resolve all four local images, detect the optional MIRRO A4 target, extract silhouettes, generate BodyMesh v3 only when all four metric views are valid (otherwise v2 fallback), then persist media + profile only after calibration succeeds. Keep the previous saved profile untouched on failure.
+- **Save body:** validate client-side, resolve all four local images, detect the MIRRO A4 target, extract silhouettes and texture exposure statistics, then attempt the shared pinhole CameraRig. Persist BodyCalibration v4 only when the camera solve succeeds; otherwise preserve the metric v3 / weak-perspective fallback. Keep the previous saved profile untouched on failure.
 - **Replace body view:** allows replacing one or more views. Any changed photo or measurement makes the previous calibration stale until the user explicitly recalibrates.
-- **Add garment:** validate name + two images + physical fabric profile, remove backgrounds locally, calibrate front/back alpha silhouettes, persist media/calibration/fabric metadata, then clear only the new-item form. Weight/stretch presets may prefill the physical profile, but the stored values are the solver source of truth for new garments.
+- **Add garment:** validate name + two images + physical fabric profile, remove backgrounds locally, calibrate front/back alpha silhouettes, persist media/calibration/fabric metadata, then clear only the new-item form. Library presets only prefill the explicit solver values; any manual physics edit detaches the library id so the UI never implies an untouched preset.
 - **Delete garment:** is irreversible within the current local dataset. The delete affordance is explicit, scoped to one garment, and requires an app-owned confirmation naming the consequence.
 - **Physical try-on:** ensure an anatomical BodyMesh v2 (upgrade legacy v1 calibration in memory when needed), build a fresh semantic runtime GarmentMesh, simulate locally with anatomical body + garment self-collision, then render the saved front/back garment textures over solved UV regions. Never mutate source garment media.
 - **Legacy garment:** if a previously saved garment has no calibration metadata, derive calibration on demand from its stored processed PNGs.

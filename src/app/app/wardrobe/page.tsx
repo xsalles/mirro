@@ -7,6 +7,11 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MediaImage } from "@/components/media-image";
 import { useMirro } from "@/components/mirro-provider";
 import { calibrateGarmentFromProcessedImages } from "@/lib/mirro/garment-image-processing";
+import {
+  FABRIC_LIBRARY,
+  fabricProfileToForm,
+  getFabricLibraryEntry,
+} from "@/lib/mirro/fabric-library";
 import { defaultFabricPhysicalProfile } from "@/lib/mirro/garment-mesh";
 import { removeFlatBackground } from "@/lib/mirro/image-processing";
 import type { FabricWeight, Garment, GarmentCategory, MediaRef, StretchLevel } from "@/lib/mirro/types";
@@ -28,6 +33,7 @@ export default function WardrobePage() {
     size: "M",
     fabricWeight: "medium" as FabricWeight,
     stretch: "low" as StretchLevel,
+    fabricLibraryId: "",
   });
   const [physics, setPhysics] = useState(() => {
     const profile = defaultFabricPhysicalProfile("medium", "low");
@@ -102,6 +108,7 @@ export default function WardrobePage() {
         images: { front: frontRef, back: backRef },
         calibration,
         physicalProfile,
+        fabricLibraryId: form.fabricLibraryId || undefined,
         createdAt: new Date().toISOString(),
       };
       await addGarment(garment, [
@@ -161,6 +168,35 @@ export default function WardrobePage() {
                 <input id="size" className="mt-2" type="text" maxLength={10} value={form.size} onChange={(e) => setForm((prev) => ({ ...prev, size: e.target.value }))} />
               </div>
 
+              <div className="sm:col-span-2">
+                <label htmlFor="fabricLibraryId" className="text-sm font-semibold">
+                  Biblioteca de tecido
+                </label>
+                <select
+                  id="fabricLibraryId"
+                  className="mt-2"
+                  value={form.fabricLibraryId}
+                  onChange={(e) => {
+                    const fabricLibraryId = e.target.value;
+                    const entry = getFabricLibraryEntry(fabricLibraryId);
+                    setForm((prev) => ({ ...prev, fabricLibraryId }));
+                    if (entry) setPhysics(fabricProfileToForm(entry.profile));
+                  }}
+                >
+                  <option value="">Preset simples / ajuste manual</option>
+                  {FABRIC_LIBRARY.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name} · {entry.profile.densityGsm} g/m²
+                    </option>
+                  ))}
+                </select>
+                {form.fabricLibraryId ? (
+                  <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
+                    {getFabricLibraryEntry(form.fabricLibraryId)?.notes}
+                  </p>
+                ) : null}
+              </div>
+
               <div>
                 <label htmlFor="fabricWeight" className="text-sm font-semibold">Peso do tecido</label>
                 <select
@@ -169,9 +205,13 @@ export default function WardrobePage() {
                   value={form.fabricWeight}
                   onChange={(e) => {
                     const fabricWeight = e.target.value as FabricWeight;
-                    setForm((prev) => ({ ...prev, fabricWeight }));
+                    setForm((prev) => ({
+                      ...prev,
+                      fabricWeight,
+                      fabricLibraryId: "",
+                    }));
                     const preset = defaultFabricPhysicalProfile(fabricWeight, form.stretch);
-                    setPhysics(Object.fromEntries(Object.entries(preset).map(([key, value]) => [key, String(value)])) as typeof physics);
+                    setPhysics(fabricProfileToForm(preset));
                   }}
                 >
                   <option value="light">Leve</option>
@@ -188,9 +228,13 @@ export default function WardrobePage() {
                   value={form.stretch}
                   onChange={(e) => {
                     const stretch = e.target.value as StretchLevel;
-                    setForm((prev) => ({ ...prev, stretch }));
+                    setForm((prev) => ({
+                      ...prev,
+                      stretch,
+                      fabricLibraryId: "",
+                    }));
                     const preset = defaultFabricPhysicalProfile(form.fabricWeight, stretch);
-                    setPhysics(Object.fromEntries(Object.entries(preset).map(([key, value]) => [key, String(value)])) as typeof physics);
+                    setPhysics(fabricProfileToForm(preset));
                   }}
                 >
                   <option value="none">Nenhuma</option>
@@ -264,7 +308,10 @@ export default function WardrobePage() {
                     value={physics[key as keyof typeof physics]}
                     aria-invalid={Boolean(errors[key])}
                     aria-describedby={errors[key] ? `${key}-error` : undefined}
-                    onChange={(e) => setPhysics((prev) => ({ ...prev, [key]: e.target.value }))}
+                    onChange={(e) => {
+                      setPhysics((prev) => ({ ...prev, [key]: e.target.value }));
+                      setForm((prev) => ({ ...prev, fabricLibraryId: "" }));
+                    }}
                   />
                   {unit ? (
                     <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-[var(--muted)]">
@@ -312,6 +359,11 @@ export default function WardrobePage() {
                     {garment.calibration ? (
                       <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
                         forma calibrada · {Math.round(garment.calibration.quality.score * 100)}%
+                      </p>
+                    ) : null}
+                    {garment.fabricLibraryId ? (
+                      <p className="mt-1 text-xs font-semibold text-[var(--thread)]">
+                        {getFabricLibraryEntry(garment.fabricLibraryId)?.name ?? "Tecido da biblioteca"}
                       </p>
                     ) : null}
                     {garment.physicalProfile ? (

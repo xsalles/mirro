@@ -21,18 +21,19 @@ Next.js App Router + React client components for local-only workflows. IndexedDB
 
 BodyMesh v2 is deterministic and anatomical enough for separate sleeve/leg collision, while still remaining a parametric reconstruction rather than a full photogrammetric scan. Existing v1 profiles remain readable and are rebuilt as v2 in memory when try-on starts.
 
-## Camera model — metric target v3 implemented
+## Camera model — shared pinhole v4 implemented
 
-MIRRO now ships a printable A4 target with four chromatic square fiducials at known center-to-center distances (158 mm horizontal, 245 mm vertical). Classical color segmentation detects the four markers locally in each body photo and derives:
+The printable A4 target still supplies a metric plane and four deterministic correspondences per body view. MIRRO now additionally solves a shared pinhole camera rig when all four target detections are valid:
 
-- pixels per centimeter
-- image roll
-- perspective skew estimate
-- per-view calibration score
+1. solve one planar homography per view
+2. refine shared intrinsics `fx`, `fy`, `cx`, `cy` with zero skew
+3. decompose each homography into an orthonormal rotation + translation
+4. jointly score the views using target reprojection and rotation constraints
+5. persist RMS reprojection error, conditioning score and per-view extrinsics
 
-If front, back, left and right all contain a valid target, normalized silhouette widths are converted to observed centimeters before BodyMesh construction and the calibration becomes `metric-target-anatomical-v3`. The target must be kept in the same depth plane as the body. Missing/partial targets automatically fall back to the existing weak-perspective v2 path.
+A poorly conditioned capture (for example targets that are all nearly fronto-parallel) is explicitly warned about. If the pinhole solve is degenerate, MIRRO keeps the metric v3 result rather than inventing camera parameters.
 
-This is a metric planar reference, not a complete pinhole intrinsic/extrinsic solve or multi-view bundle adjustment.
+The current solver is a deterministic lightweight bundle-style refinement specialized to the MIRRO planar target. It does not yet estimate lens distortion coefficients or run general sparse multi-feature bundle adjustment.
 
 ## Garment image + calibration pipeline — implemented
 
@@ -127,7 +128,9 @@ Physical mode now defaults to a Three.js r186 scene using `WebGPURenderer`.
 - real depth buffer occludes front/back/body surfaces correctly.
 - ACES filmic tone mapping is enabled.
 - real garment front/back photos are sampled through semantic UV regions.
-- body triangles are partitioned by surface orientation (front/back/right/left) and sample the corresponding saved body photo through silhouette-derived UVs.
+- the four saved body views are exposure/white-balance calibrated from segmented body pixels.
+- the renderer builds one 360° cylindrical body atlas with overlapping angular coverage and cosine feather blending.
+- BodyMesh vertices use continuous cylindrical UVs, eliminating the previous hard material boundary between front/right/back/left.
 - `MeshPhysicalMaterial` adds fabric roughness, sheen and low clearcoat; measured density/stiffness influence the material appearance when available.
 - light / medium / heavy fabric presets affect the PBR appearance as well as physics.
 - studio hemisphere, key, fill and rim lights provide shape readability.
@@ -139,10 +142,11 @@ The renderer materially improves realism, but exact visual fit still depends on 
 
 ## Engine roadmap
 
-- Upgrade planar target calibration to a full pinhole intrinsic/extrinsic solve and bundle adjustment.
-- Add seam blending/exposure matching between the four projected body textures.
+- Add radial/tangential lens distortion calibration and undistortion.
+- Add a dedicated optical calibration capture with multiple target tilts for stronger intrinsic conditioning.
+- Add seam-aware color transfer/local exposure fields beyond global RGB gains.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
-- Add fabric libraries/material sheets so common compositions can auto-fill measured physical profiles.
+- Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.
 - Move the Worker solver to WASM when mesh density or semantic topology increases substantially.
 - Add optional environment-map based image-based lighting and higher-quality soft shadows.

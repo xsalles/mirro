@@ -370,14 +370,18 @@ export default function BodyPage() {
       {calibration ? (
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
-            <h2 className="font-display text-3xl font-bold tracking-[-.04em]">BodyMesh v2 anatômico pronto</h2>
+            <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
+              {calibration.version === 4 ? "CameraRig v4 + BodyMesh prontos" : "BodyMesh anatômico pronto"}
+            </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 3
-                ? "Calibração métrica v3 ativa: o cartão A4 definiu px/cm nas quatro vistas; medidas reais refinam torso e membros."
-                : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar escala métrica v3 por vista."}
+              {calibration.version === 4 && calibration.cameraRig
+                ? "Pinhole compartilhado ativo: intrínsecos da câmera e pose de cada vista foram refinados em conjunto; o corpo também recebeu equalização de exposição multi-view."
+                : calibration.version === 3
+                  ? "Calibração métrica v3 ativa: o cartão A4 definiu px/cm nas quatro vistas; medidas reais refinam torso e membros."
+                  : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-5">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-6">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -400,6 +404,14 @@ export default function BodyPage() {
                 <dt className="text-xs font-semibold text-white/55">Envelope</dt>
                 <dd className="mt-1 text-sm font-bold tabular-nums">
                   {calibration.mesh.boundsCm.width.toFixed(0)} × {calibration.mesh.boundsCm.depth.toFixed(0)} × {calibration.mesh.boundsCm.height.toFixed(0)} cm
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Óptica</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {calibration.cameraRig
+                    ? `f ${Math.round((calibration.cameraRig.intrinsics.fx + calibration.cameraRig.intrinsics.fy) / 2)} px · ${calibration.cameraRig.rmsReprojectionErrorPx.toFixed(2)} px RMS`
+                    : "fallback métrico"}
                 </dd>
               </div>
             </dl>
@@ -425,9 +437,11 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 3
-                  ? "Alvo métrico reconhecido nas quatro vistas; BodyMesh v3 em escala métrica ativado."
-                  : "As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica v2 e os colisores separados."}
+                {calibration.version === 4
+                  ? "CameraRig pinhole, poses por vista e equalização de exposição concluídos localmente."
+                  : calibration.version === 3
+                    ? "Alvo métrico reconhecido nas quatro vistas; BodyMesh v3 em escala métrica ativado."
+                    : "As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica e os colisores separados."}
               </p>
             )}
           </div>

@@ -730,8 +730,8 @@ function createRawDepthMap(params: {
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    52,
-    76,
+    58,
+    84,
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);

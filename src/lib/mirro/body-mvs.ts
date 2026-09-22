@@ -2907,15 +2907,16 @@ export function buildClassicalMultiViewStereo(
     regularizeDepthMap(depthMaps[view]);
   }
 
-  enforceCrossViewConsistency({
-    maps: depthMaps,
-    views,
-    bodyHeightCm: params.bodyHeightCm,
-    toleranceCm: Math.max(
-      1.4,
-      params.hull.voxelSizeCm * 0.85,
-    ),
-  });
+  const crossViewConsistency =
+    enforceCrossViewConsistency({
+      maps: depthMaps,
+      views,
+      bodyHeightCm: params.bodyHeightCm,
+      toleranceCm: Math.max(
+        1.4,
+        params.hull.voxelSizeCm * 0.85,
+      ),
+    });
 
   for (const view of BODY_VIEW_SEQUENCE) {
     depthMaps[view] = edgeAwareUpsampleDepthMap(
@@ -2923,17 +2924,6 @@ export function buildClassicalMultiViewStereo(
       views[view],
     );
   }
-
-  const crossViewConsistency =
-    enforceCrossViewConsistency({
-      maps: depthMaps,
-      views,
-      bodyHeightCm: params.bodyHeightCm,
-      toleranceCm: Math.max(
-        1.2,
-        params.hull.voxelSizeCm * 0.78,
-      ),
-    });
 
   let validDepthCount = 0;
   let confidenceSum = 0;
@@ -3000,12 +2990,7 @@ export function buildClassicalMultiViewStereo(
     getCensusPopcountKernel().backend;
   const numericKernel = getMvsNumericBackend();
   const isV11 =
-    optimizedRig?.metadata.version === 3 &&
-    BODY_VIEW_SEQUENCE.some(
-      (view) =>
-        depthMaps[view].version === 3 &&
-        (depthMaps[view].propagatedCount ?? 0) > 0,
-    );
+    optimizedRig?.metadata.version === 3;
   const isV10 =
     !isV11 &&
     optimizedRig?.metadata.version === 2 &&

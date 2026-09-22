@@ -1,5 +1,6 @@
 import { bodyRingY, getBodySectionAtY } from "./body-collision";
 import type {
+  BodyCollisionPrimitive,
   BodyMesh,
   ClothConstraint,
   ClothConstraintKind,
@@ -9,8 +10,34 @@ import type {
   GarmentCalibration,
   GarmentCategory,
   GarmentMesh,
+  GarmentMeshRegion,
+  GarmentRegionKind,
+  GarmentSilhouette,
   StretchLevel,
 } from "./types";
+
+type Vec3 = [number, number, number];
+type Vec2 = [number, number];
+
+type MeshContext = {
+  positions: number[];
+  previousPositions: number[];
+  inverseMass: number[];
+  uv: number[];
+  textureSide: number[];
+  regionIds: number[];
+  indices: number[];
+  constraints: ClothConstraint[];
+  regions: GarmentMeshRegion[];
+};
+
+type RegionHandle = {
+  id: number;
+  kind: GarmentRegionKind;
+  rows: number;
+  cols: number;
+  vertex: (row: number, col: number) => number;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -23,6 +50,13 @@ function sampleProfile(profile: number[], t: number) {
   const right = Math.min(profile.length - 1, left + 1);
   const mix = position - left;
   return profile[left] + (profile[right] - profile[left]) * mix;
+}
+
+function sampleIntervals(silhouette: GarmentSilhouette, t: number) {
+  const profile = silhouette.intervalProfile;
+  if (!profile?.length) return [] as Array<[number, number]>;
+  const index = clamp(Math.round(t * (profile.length - 1)), 0, profile.length - 1);
+  return profile[index] ?? [];
 }
 
 function distance(positions: number[], a: number, b: number) {
@@ -52,14 +86,6 @@ function addConstraint(
   });
 }
 
-function gridForCategory(category: GarmentCategory) {
-  if (category === "pants") return { rows: 38, cols: 20, expectedHeightRatio: 0.5 };
-  if (category === "shorts") return { rows: 26, cols: 20, expectedHeightRatio: 0.26 };
-  if (category === "hoodie") return { rows: 34, cols: 22, expectedHeightRatio: 0.42 };
-  if (category === "shirt") return { rows: 32, cols: 22, expectedHeightRatio: 0.38 };
-  return { rows: 30, cols: 22, expectedHeightRatio: 0.35 };
-}
-
 function materialCompliance(stretch: StretchLevel) {
   if (stretch === "none") return 0.0000004;
   if (stretch === "low") return 0.000002;
@@ -75,42 +101,773 @@ function bendingCompliance(weight: FabricWeight) {
 
 export function clothMaterialForGarment(garment: Garment): ClothMaterial {
   const thickness =
-    garment.fabricWeight === "light" ? 0.28 : garment.fabricWeight === "heavy" ? 0.72 : 0.46;
+    garment.fabricWeight === "light"
+      ? 0.28
+      : garment.fabricWeight === "heavy"
+        ? 0.72
+        : 0.46;
 
   return {
     stretchCompliance: materialCompliance(garment.stretch),
     shearCompliance: materialCompliance(garment.stretch) * 1.4,
     bendCompliance: bendingCompliance(garment.fabricWeight),
     seamCompliance: 0.00000008,
-    damping: garment.fabricWeight === "heavy" ? 0.988 : garment.fabricWeight === "light" ? 0.994 : 0.991,
+    damping:
+      garment.fabricWeight === "heavy"
+        ? 0.988
+        : garment.fabricWeight === "light"
+          ? 0.994
+          : 0.991,
     gravityCmPerSec2: 981,
     thicknessCm: thickness,
     friction: garment.fabricWeight === "heavy" ? 0.16 : 0.1,
   };
 }
 
-function bodyAnchor(mesh: BodyMesh, category: GarmentCategory) {
-  if (category === "pants" || category === "shorts") {
-    return {
-      referenceRing: mesh.landmarks.hipsRing,
-      startY: bodyRingY(mesh, mesh.landmarks.waistRing) + mesh.boundsCm.height * 0.018,
-      referenceRowRatio: 0.18,
-      ease: category === "pants" ? 1.055 : 1.075,
-    };
-  }
+function vecSub(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
 
-  return {
-    referenceRing: mesh.landmarks.chestRing,
-    startY: bodyRingY(mesh, mesh.landmarks.chestRing) + mesh.boundsCm.height * 0.105,
-    referenceRowRatio: 0.3,
-    ease: category === "hoodie" ? 1.18 : category === "shirt" ? 1.1 : 1.08,
-  };
+function vecLength(v: Vec3) {
+  return Math.hypot(v[0], v[1], v[2]);
+}
+
+function vecNormalize(v: Vec3): Vec3 {
+  const length = vecLength(v) || 1;
+  return [v[0] / length, v[1] / length, v[2] / length];
+}
+
+function vecCross(a: Vec3, b: Vec3): Vec3 {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
 }
 
 function averageAspect(calibration: GarmentCalibration) {
-  const front = calibration.front.bounds.height / Math.max(1, calibration.front.bounds.width);
-  const back = calibration.back.bounds.height / Math.max(1, calibration.back.bounds.width);
+  const front =
+    calibration.front.bounds.height / Math.max(1, calibration.front.bounds.width);
+  const back =
+    calibration.back.bounds.height / Math.max(1, calibration.back.bounds.width);
   return (front + back) / 2;
+}
+
+function pushRegion(params: {
+  context: MeshContext;
+  kind: GarmentRegionKind;
+  side: 0 | 1;
+  rows: number;
+  cols: number;
+  position: (v: number, u: number) => Vec3;
+  texcoord: (v: number, u: number) => Vec2;
+}) {
+  const { context, kind, side, rows, cols, position, texcoord } = params;
+  const id = context.regions.length;
+  const vertexStart = context.positions.length / 3;
+  const indexStart = context.indices.length;
+
+  function vertex(row: number, col: number) {
+    return vertexStart + row * cols + col;
+  }
+
+  for (let row = 0; row < rows; row += 1) {
+    const v = row / Math.max(1, rows - 1);
+    for (let col = 0; col < cols; col += 1) {
+      const u = col / Math.max(1, cols - 1);
+      const p = position(v, u);
+      const tex = texcoord(v, u);
+      context.positions.push(...p);
+      context.previousPositions.push(...p);
+      context.inverseMass.push(1);
+      context.uv.push(tex[0], tex[1]);
+      context.textureSide.push(side);
+      context.regionIds.push(id);
+    }
+  }
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const here = vertex(row, col);
+
+      if (col + 1 < cols) {
+        addConstraint(
+          context.constraints,
+          context.positions,
+          "structural",
+          here,
+          vertex(row, col + 1),
+        );
+      }
+      if (row + 1 < rows) {
+        addConstraint(
+          context.constraints,
+          context.positions,
+          "structural",
+          here,
+          vertex(row + 1, col),
+        );
+      }
+      if (row + 1 < rows && col + 1 < cols) {
+        addConstraint(
+          context.constraints,
+          context.positions,
+          "shear",
+          here,
+          vertex(row + 1, col + 1),
+        );
+      }
+      if (row + 1 < rows && col > 0) {
+        addConstraint(
+          context.constraints,
+          context.positions,
+          "shear",
+          here,
+          vertex(row + 1, col - 1),
+        );
+      }
+      if (col + 2 < cols) {
+        addConstraint(
+          context.constraints,
+          context.positions,
+          "bend",
+          here,
+          vertex(row, col + 2),
+        );
+      }
+      if (row + 2 < rows) {
+        addConstraint(
+          context.constraints,
+          context.positions,
+          "bend",
+          here,
+          vertex(row + 2, col),
+        );
+      }
+
+      if (row + 1 < rows && col + 1 < cols) {
+        const a = vertex(row, col);
+        const b = vertex(row, col + 1);
+        const cc = vertex(row + 1, col);
+        const d = vertex(row + 1, col + 1);
+        if (side === 0) {
+          context.indices.push(a, cc, b, b, cc, d);
+        } else {
+          context.indices.push(a, b, cc, b, d, cc);
+        }
+      }
+    }
+  }
+
+  context.regions.push({
+    id,
+    kind,
+    vertexStart,
+    vertexCount: rows * cols,
+    indexStart,
+    indexCount: context.indices.length - indexStart,
+  });
+
+  return { id, kind, rows, cols, vertex } satisfies RegionHandle;
+}
+
+function seamRows(
+  context: MeshContext,
+  a: RegionHandle,
+  aRow: number,
+  b: RegionHandle,
+  bRow: number,
+  restScale = 0.08,
+) {
+  const count = Math.min(a.cols, b.cols);
+  for (let i = 0; i < count; i += 1) {
+    const aCol = Math.round((i / Math.max(1, count - 1)) * (a.cols - 1));
+    const bCol = Math.round((i / Math.max(1, count - 1)) * (b.cols - 1));
+    addConstraint(
+      context.constraints,
+      context.positions,
+      "seam",
+      a.vertex(aRow, aCol),
+      b.vertex(bRow, bCol),
+      restScale,
+    );
+  }
+}
+
+function seamColumns(
+  context: MeshContext,
+  a: RegionHandle,
+  aCol: number,
+  b: RegionHandle,
+  bCol: number,
+  restScale = 0.06,
+) {
+  const count = Math.min(a.rows, b.rows);
+  for (let i = 0; i < count; i += 1) {
+    const aRow = Math.round((i / Math.max(1, count - 1)) * (a.rows - 1));
+    const bRow = Math.round((i / Math.max(1, count - 1)) * (b.rows - 1));
+    addConstraint(
+      context.constraints,
+      context.positions,
+      "seam",
+      a.vertex(aRow, aCol),
+      b.vertex(bRow, bCol),
+      restScale,
+    );
+  }
+}
+
+function uvForBounds(
+  silhouette: GarmentSilhouette,
+  normalizedX: number,
+  normalizedY: number,
+): Vec2 {
+  return [
+    (silhouette.bounds.x +
+      clamp(normalizedX, 0, 1) * Math.max(1, silhouette.bounds.width - 1)) /
+      silhouette.sourceWidth,
+    (silhouette.bounds.y +
+      clamp(normalizedY, 0, 1) * Math.max(1, silhouette.bounds.height - 1)) /
+      silhouette.sourceHeight,
+  ];
+}
+
+function findLimb(
+  bodyMesh: BodyMesh,
+  part: "left-arm" | "right-arm" | "left-leg" | "right-leg",
+) {
+  return bodyMesh.collisionPrimitives?.find(
+    (primitive): primitive is Extract<
+      BodyCollisionPrimitive,
+      { type: "tapered-capsule" }
+    > => primitive.type === "tapered-capsule" && primitive.part === part,
+  );
+}
+
+function limbBasis(primitive: Extract<BodyCollisionPrimitive, { type: "tapered-capsule" }>) {
+  const axis = vecNormalize(vecSub(primitive.end, primitive.start));
+  const reference: Vec3 = [0, 0, 1];
+  let basisX = vecNormalize(vecCross(reference, axis));
+  if (vecLength(basisX) < 0.25) basisX = [1, 0, 0];
+  let basisZ = vecNormalize(vecCross(axis, basisX));
+  if (basisZ[2] < 0) basisZ = [-basisZ[0], -basisZ[1], -basisZ[2]];
+  return { axis, basisX, basisZ };
+}
+
+function limbSurfacePosition(params: {
+  primitive: Extract<BodyCollisionPrimitive, { type: "tapered-capsule" }>;
+  v: number;
+  u: number;
+  front: boolean;
+  lengthFraction: number;
+  ease: number;
+  thickness: number;
+}) {
+  const { primitive, v, u, front, lengthFraction, ease, thickness } = params;
+  const t = clamp(v * lengthFraction, 0, 1);
+  const center: Vec3 = [
+    primitive.start[0] + (primitive.end[0] - primitive.start[0]) * t,
+    primitive.start[1] + (primitive.end[1] - primitive.start[1]) * t,
+    primitive.start[2] + (primitive.end[2] - primitive.start[2]) * t,
+  ];
+  const bodyRadius =
+    primitive.startRadius +
+    (primitive.endRadius - primitive.startRadius) * t;
+  const radius = bodyRadius * ease + thickness * 2.3;
+  const { basisX, basisZ } = limbBasis(primitive);
+  const angle = front ? u * Math.PI : -u * Math.PI;
+  const cx = Math.cos(angle) * radius;
+  const sz = Math.sin(angle) * radius;
+
+  return [
+    center[0] + basisX[0] * cx + basisZ[0] * sz,
+    center[1] + basisX[1] * cx + basisZ[1] * sz,
+    center[2] + basisX[2] * cx + basisZ[2] * sz,
+  ] as Vec3;
+}
+
+function torsoTextureRange(silhouette: GarmentSilhouette) {
+  const width = clamp(sampleProfile(silhouette.widthProfile, 0.58), 0.38, 0.95);
+  const center = clamp(0.5 + sampleProfile(silhouette.centerProfile, 0.58), 0.3, 0.7);
+  return {
+    min: clamp(center - width / 2, 0, 1),
+    max: clamp(center + width / 2, 0, 1),
+  };
+}
+
+function buildTopMesh(
+  context: MeshContext,
+  garment: Garment,
+  calibration: GarmentCalibration,
+  bodyMesh: BodyMesh,
+  material: ClothMaterial,
+) {
+  const category = garment.category;
+  const rows = category === "hoodie" ? 30 : 28;
+  const cols = 16;
+  const ease = category === "hoodie" ? 1.18 : category === "shirt" ? 1.11 : 1.08;
+  const shoulderRing =
+    bodyMesh.landmarks.shoulderRing ?? Math.round(bodyMesh.ringCount * 0.18);
+  const startY = bodyRingY(bodyMesh, shoulderRing) + bodyMesh.boundsCm.height * 0.018;
+  const expectedHeight =
+    bodyMesh.boundsCm.height *
+    (category === "hoodie" ? 0.42 : category === "shirt" ? 0.38 : 0.35);
+  const chestSection = getBodySectionAtY(
+    bodyMesh,
+    bodyRingY(bodyMesh, bodyMesh.landmarks.chestRing),
+  );
+  const targetWidth = chestSection.radiusX * 2 * ease;
+  const reference =
+    (sampleProfile(calibration.front.widthProfile, 0.58) +
+      sampleProfile(calibration.back.widthProfile, 0.58)) /
+    2;
+  const scale = targetWidth / Math.max(0.22, reference);
+  const imageHeight = scale * averageAspect(calibration);
+  const garmentHeight = clamp(
+    imageHeight,
+    expectedHeight * 0.78,
+    expectedHeight * 1.24,
+  );
+
+  const handles: Record<string, RegionHandle> = {};
+
+  for (const side of [0, 1] as const) {
+    const silhouette = side === 0 ? calibration.front : calibration.back;
+    const sign = side === 0 ? 1 : -1;
+    const textureRange = torsoTextureRange(silhouette);
+    const kind: GarmentRegionKind =
+      side === 0 ? "torso-front" : "torso-back";
+
+    handles[kind] = pushRegion({
+      context,
+      kind,
+      side,
+      rows,
+      cols,
+      position(v, u) {
+        const y = startY - v * garmentHeight;
+        const section = getBodySectionAtY(bodyMesh, y);
+        const shapeReference = Math.max(
+          0.2,
+          sampleProfile(silhouette.widthProfile, 0.58),
+        );
+        const shape =
+          clamp(
+            sampleProfile(silhouette.widthProfile, 0.2 + v * 0.8) /
+              shapeReference,
+            0.76,
+            1.22,
+          );
+        const halfWidth = section.radiusX * ease * shape;
+        const x = (u - 0.5) * halfWidth * 2;
+        const normalizedX = x / Math.max(section.radiusX, 0.65);
+        const surface =
+          Math.abs(normalizedX) < 1
+            ? section.radiusZ *
+              Math.sqrt(Math.max(0, 1 - normalizedX * normalizedX))
+            : section.radiusZ * 0.22;
+        return [x, y, sign * (surface + material.thicknessCm * 2.3)];
+      },
+      texcoord(v, u) {
+        return uvForBounds(
+          silhouette,
+          textureRange.min + (textureRange.max - textureRange.min) * u,
+          0.04 + v * 0.94,
+        );
+      },
+    });
+  }
+
+  seamColumns(
+    context,
+    handles["torso-front"],
+    0,
+    handles["torso-back"],
+    0,
+  );
+  seamColumns(
+    context,
+    handles["torso-front"],
+    cols - 1,
+    handles["torso-back"],
+    cols - 1,
+  );
+
+  const shoulderSpan = Math.floor(cols * 0.28);
+  for (let col = 0; col < shoulderSpan; col += 1) {
+    addConstraint(
+      context.constraints,
+      context.positions,
+      "seam",
+      handles["torso-front"].vertex(0, col),
+      handles["torso-back"].vertex(0, col),
+      0.06,
+    );
+    const mirrored = cols - 1 - col;
+    addConstraint(
+      context.constraints,
+      context.positions,
+      "seam",
+      handles["torso-front"].vertex(0, mirrored),
+      handles["torso-back"].vertex(0, mirrored),
+      0.06,
+    );
+  }
+
+  const sleeveLengthFraction =
+    category === "hoodie" ? 0.94 : category === "shirt" ? 0.7 : 0.42;
+  const sleeveRows = category === "hoodie" ? 20 : 14;
+  const sleeveCols = 7;
+
+  for (const arm of ["left-arm", "right-arm"] as const) {
+    const primitive = findLimb(bodyMesh, arm);
+    if (!primitive) continue;
+    const left = arm === "left-arm";
+
+    for (const side of [0, 1] as const) {
+      const silhouette = side === 0 ? calibration.front : calibration.back;
+      const kind = (
+        left
+          ? side === 0
+            ? "left-sleeve-front"
+            : "left-sleeve-back"
+          : side === 0
+            ? "right-sleeve-front"
+            : "right-sleeve-back"
+      ) satisfies GarmentRegionKind;
+      const outerMin = left ? 0 : 0.72;
+      const outerMax = left ? 0.28 : 1;
+
+      handles[kind] = pushRegion({
+        context,
+        kind,
+        side,
+        rows: sleeveRows,
+        cols: sleeveCols,
+        position(v, u) {
+          return limbSurfacePosition({
+            primitive,
+            v,
+            u,
+            front: side === 0,
+            lengthFraction: sleeveLengthFraction,
+            ease: ease + (category === "hoodie" ? 0.08 : 0.03),
+            thickness: material.thicknessCm,
+          });
+        },
+        texcoord(v, u) {
+          return uvForBounds(
+            silhouette,
+            outerMin + (outerMax - outerMin) * u,
+            0.02 + v * (category === "hoodie" ? 0.62 : 0.42),
+          );
+        },
+      });
+    }
+
+    const frontKind =
+      left ? "left-sleeve-front" : "right-sleeve-front";
+    const backKind =
+      left ? "left-sleeve-back" : "right-sleeve-back";
+    seamColumns(
+      context,
+      handles[frontKind],
+      0,
+      handles[backKind],
+      0,
+      0.05,
+    );
+    seamColumns(
+      context,
+      handles[frontKind],
+      sleeveCols - 1,
+      handles[backKind],
+      sleeveCols - 1,
+      0.05,
+    );
+
+    const torsoCols = handles["torso-front"].cols;
+    const frontTorso = handles["torso-front"];
+    const backTorso = handles["torso-back"];
+    const rootFront = handles[frontKind];
+    const rootBack = handles[backKind];
+    const attachColumns = Math.min(sleeveCols, shoulderSpan + 1);
+
+    for (let i = 0; i < attachColumns; i += 1) {
+      const torsoCol = left
+        ? i
+        : torsoCols - 1 - i;
+      const sleeveCol = left ? i : sleeveCols - 1 - i;
+      addConstraint(
+        context.constraints,
+        context.positions,
+        "seam",
+        rootFront.vertex(0, sleeveCol),
+        frontTorso.vertex(0, clamp(torsoCol, 0, torsoCols - 1)),
+        0.08,
+      );
+      addConstraint(
+        context.constraints,
+        context.positions,
+        "seam",
+        rootBack.vertex(0, sleeveCol),
+        backTorso.vertex(0, clamp(torsoCol, 0, torsoCols - 1)),
+        0.08,
+      );
+    }
+  }
+
+  return { rows, cols };
+}
+
+function persistentSplitRatio(silhouette: GarmentSilhouette) {
+  const profile = silhouette.intervalProfile;
+  if (!profile?.length) return 0.42;
+
+  const start = Math.floor(profile.length * 0.2);
+  for (let i = start; i < profile.length - 2; i += 1) {
+    if (
+      (profile[i]?.length ?? 0) >= 2 &&
+      (profile[i + 1]?.length ?? 0) >= 2 &&
+      (profile[i + 2]?.length ?? 0) >= 2
+    ) {
+      return clamp(i / Math.max(1, profile.length - 1), 0.28, 0.62);
+    }
+  }
+  return 0.42;
+}
+
+function legUvInterval(
+  silhouette: GarmentSilhouette,
+  v: number,
+  right: boolean,
+) {
+  const intervals = sampleIntervals(silhouette, v);
+  if (intervals.length >= 2) {
+    return right ? intervals[intervals.length - 1] : intervals[0];
+  }
+  return right ? ([0.52, 1] as const) : ([0, 0.48] as const);
+}
+
+function buildBottomMesh(
+  context: MeshContext,
+  garment: Garment,
+  calibration: GarmentCalibration,
+  bodyMesh: BodyMesh,
+  material: ClothMaterial,
+) {
+  const isShorts = garment.category === "shorts";
+  const waistRows = 8;
+  const waistCols = 16;
+  const legRows = isShorts ? 12 : 30;
+  const legCols = 8;
+  const ease = isShorts ? 1.09 : 1.06;
+  const waistY =
+    bodyRingY(bodyMesh, bodyMesh.landmarks.waistRing) +
+    bodyMesh.boundsCm.height * 0.018;
+  const crotchRing =
+    bodyMesh.landmarks.crotchRing ?? Math.round(bodyMesh.ringCount * 0.63);
+  const crotchY = bodyRingY(bodyMesh, crotchRing);
+  const frontSplit = persistentSplitRatio(calibration.front);
+  const backSplit = persistentSplitRatio(calibration.back);
+  const splitRatio = (frontSplit + backSplit) / 2;
+  const handles: Record<string, RegionHandle> = {};
+
+  for (const side of [0, 1] as const) {
+    const silhouette = side === 0 ? calibration.front : calibration.back;
+    const sign = side === 0 ? 1 : -1;
+    const kind: GarmentRegionKind =
+      side === 0 ? "waist-front" : "waist-back";
+
+    handles[kind] = pushRegion({
+      context,
+      kind,
+      side,
+      rows: waistRows,
+      cols: waistCols,
+      position(v, u) {
+        const y = waistY + (crotchY - waistY) * v;
+        const section = getBodySectionAtY(bodyMesh, y);
+        const x = (u - 0.5) * section.radiusX * 2 * ease;
+        const normalizedX = x / Math.max(section.radiusX, 0.65);
+        const surface =
+          Math.abs(normalizedX) < 1
+            ? section.radiusZ *
+              Math.sqrt(Math.max(0, 1 - normalizedX * normalizedX))
+            : section.radiusZ * 0.2;
+        return [x, y, sign * (surface + material.thicknessCm * 2.4)];
+      },
+      texcoord(v, u) {
+        return uvForBounds(
+          silhouette,
+          u,
+          v * splitRatio,
+        );
+      },
+    });
+  }
+
+  seamColumns(
+    context,
+    handles["waist-front"],
+    0,
+    handles["waist-back"],
+    0,
+  );
+  seamColumns(
+    context,
+    handles["waist-front"],
+    waistCols - 1,
+    handles["waist-back"],
+    waistCols - 1,
+  );
+
+  for (const leg of ["left-leg", "right-leg"] as const) {
+    const primitive = findLimb(bodyMesh, leg);
+    if (!primitive) continue;
+    const right = leg === "right-leg";
+    const lengthFraction = isShorts ? 0.38 : 0.97;
+
+    for (const side of [0, 1] as const) {
+      const silhouette = side === 0 ? calibration.front : calibration.back;
+      const kind = (
+        right
+          ? side === 0
+            ? "right-leg-front"
+            : "right-leg-back"
+          : side === 0
+            ? "left-leg-front"
+            : "left-leg-back"
+      ) satisfies GarmentRegionKind;
+
+      handles[kind] = pushRegion({
+        context,
+        kind,
+        side,
+        rows: legRows,
+        cols: legCols,
+        position(v, u) {
+          return limbSurfacePosition({
+            primitive,
+            v,
+            u,
+            front: side === 0,
+            lengthFraction,
+            ease,
+            thickness: material.thicknessCm,
+          });
+        },
+        texcoord(v, u) {
+          const imageV = splitRatio + v * (1 - splitRatio);
+          const interval = legUvInterval(silhouette, imageV, right);
+          return uvForBounds(
+            silhouette,
+            interval[0] + (interval[1] - interval[0]) * u,
+            imageV,
+          );
+        },
+      });
+    }
+
+    const frontKind =
+      right ? "right-leg-front" : "left-leg-front";
+    const backKind =
+      right ? "right-leg-back" : "left-leg-back";
+    seamColumns(
+      context,
+      handles[frontKind],
+      0,
+      handles[backKind],
+      0,
+      0.05,
+    );
+    seamColumns(
+      context,
+      handles[frontKind],
+      legCols - 1,
+      handles[backKind],
+      legCols - 1,
+      0.05,
+    );
+
+    const waistFront = handles["waist-front"];
+    const waistBack = handles["waist-back"];
+    const half = Math.floor(waistCols / 2);
+    for (let i = 0; i < legCols; i += 1) {
+      const ratio = i / Math.max(1, legCols - 1);
+      const waistCol = right
+        ? half + Math.round(ratio * (waistCols - 1 - half))
+        : Math.round(ratio * Math.max(0, half - 1));
+      addConstraint(
+        context.constraints,
+        context.positions,
+        "seam",
+        handles[frontKind].vertex(0, i),
+        waistFront.vertex(waistRows - 1, waistCol),
+        0.08,
+      );
+      addConstraint(
+        context.constraints,
+        context.positions,
+        "seam",
+        handles[backKind].vertex(0, i),
+        waistBack.vertex(waistRows - 1, waistCol),
+        0.08,
+      );
+    }
+  }
+
+  const leftFront = handles["left-leg-front"];
+  const rightFront = handles["right-leg-front"];
+  const leftBack = handles["left-leg-back"];
+  const rightBack = handles["right-leg-back"];
+  if (leftFront && rightFront && leftBack && rightBack) {
+    const crotchRows = Math.min(5, legRows);
+    for (let row = 0; row < crotchRows; row += 1) {
+      addConstraint(
+        context.constraints,
+        context.positions,
+        "seam",
+        leftFront.vertex(row, legCols - 1),
+        rightFront.vertex(row, 0),
+        0.1,
+      );
+      addConstraint(
+        context.constraints,
+        context.positions,
+        "seam",
+        leftBack.vertex(row, legCols - 1),
+        rightBack.vertex(row, 0),
+        0.1,
+      );
+    }
+  }
+
+  return { rows: waistRows + legRows, cols: waistCols };
+}
+
+function meshBounds(positions: number[]) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let index = 0; index < positions.length; index += 3) {
+    minX = Math.min(minX, positions[index]);
+    minY = Math.min(minY, positions[index + 1]);
+    minZ = Math.min(minZ, positions[index + 2]);
+    maxX = Math.max(maxX, positions[index]);
+    maxY = Math.max(maxY, positions[index + 1]);
+    maxZ = Math.max(maxZ, positions[index + 2]);
+  }
+
+  return {
+    width: maxX - minX,
+    height: maxY - minY,
+    depth: maxZ - minZ,
+  };
 }
 
 export function buildGarmentMesh(params: {
@@ -119,176 +876,43 @@ export function buildGarmentMesh(params: {
   bodyMesh: BodyMesh;
 }): GarmentMesh {
   const { garment, calibration, bodyMesh } = params;
-  const grid = gridForCategory(garment.category);
-  const anchor = bodyAnchor(bodyMesh, garment.category);
   const material = clothMaterialForGarment(garment);
-  const referenceY = bodyRingY(bodyMesh, anchor.referenceRing);
-  const bodySection = getBodySectionAtY(bodyMesh, referenceY);
-  const targetPanelWidth = bodySection.radiusX * 2 * anchor.ease;
+  const context: MeshContext = {
+    positions: [],
+    previousPositions: [],
+    inverseMass: [],
+    uv: [],
+    textureSide: [],
+    regionIds: [],
+    indices: [],
+    constraints: [],
+    regions: [],
+  };
 
-  const frontReference = Math.max(
-    0.15,
-    sampleProfile(calibration.front.widthProfile, anchor.referenceRowRatio),
-  );
-  const backReference = Math.max(
-    0.15,
-    sampleProfile(calibration.back.widthProfile, anchor.referenceRowRatio),
-  );
-  const referenceProfile = (frontReference + backReference) / 2;
-  const widthScaleCm = targetPanelWidth / referenceProfile;
-  const expectedHeight = bodyMesh.boundsCm.height * grid.expectedHeightRatio;
-  const imageHeight = widthScaleCm * averageAspect(calibration);
-  const garmentHeight = clamp(imageHeight, expectedHeight * 0.72, expectedHeight * 1.28);
+  const grid =
+    garment.category === "pants" || garment.category === "shorts"
+      ? buildBottomMesh(context, garment, calibration, bodyMesh, material)
+      : buildTopMesh(context, garment, calibration, bodyMesh, material);
 
-  const panelVertexCount = grid.rows * grid.cols;
-  const totalVertices = panelVertexCount * 2;
-  const positions = new Array<number>(totalVertices * 3).fill(0);
-  const previousPositions = new Array<number>(totalVertices * 3).fill(0);
-  const inverseMass = new Array<number>(totalVertices).fill(1);
-  const uv = new Array<number>(totalVertices * 2).fill(0);
-  const indices: number[] = [];
-  const constraints: ClothConstraint[] = [];
-
-  function vertex(panel: 0 | 1, row: number, col: number) {
-    return panel * panelVertexCount + row * grid.cols + col;
-  }
-
-  function writePanel(panel: 0 | 1) {
-    const silhouette = panel === 0 ? calibration.front : calibration.back;
-    const sign = panel === 0 ? 1 : -1;
-
-    for (let row = 0; row < grid.rows; row += 1) {
-      const v = row / Math.max(1, grid.rows - 1);
-      const rowWidth = Math.max(0.08, sampleProfile(silhouette.widthProfile, v)) * widthScaleCm;
-      const centerOffset = sampleProfile(silhouette.centerProfile, v) * widthScaleCm;
-      const y = anchor.startY - v * garmentHeight;
-      const section = getBodySectionAtY(bodyMesh, y);
-
-      for (let col = 0; col < grid.cols; col += 1) {
-        const u = col / Math.max(1, grid.cols - 1);
-        const x = centerOffset + (u - 0.5) * rowWidth;
-        const normalizedX = x / Math.max(section.radiusX, 0.65);
-        const surface =
-          Math.abs(normalizedX) < 1
-            ? section.radiusZ * Math.sqrt(Math.max(0, 1 - normalizedX * normalizedX))
-            : section.radiusZ * 0.18;
-        const z = sign * (surface + material.thicknessCm * 2.25);
-        const index = vertex(panel, row, col);
-        const offset = index * 3;
-        positions[offset] = x;
-        positions[offset + 1] = y;
-        positions[offset + 2] = z;
-        previousPositions[offset] = x;
-        previousPositions[offset + 1] = y;
-        previousPositions[offset + 2] = z;
-        uv[index * 2] =
-          (silhouette.bounds.x + u * Math.max(1, silhouette.bounds.width - 1)) /
-          silhouette.sourceWidth;
-        uv[index * 2 + 1] =
-          (silhouette.bounds.y + v * Math.max(1, silhouette.bounds.height - 1)) /
-          silhouette.sourceHeight;
-      }
-    }
-  }
-
-  writePanel(0);
-  writePanel(1);
-
-  for (const panel of [0, 1] as const) {
-    for (let row = 0; row < grid.rows; row += 1) {
-      for (let col = 0; col < grid.cols; col += 1) {
-        const here = vertex(panel, row, col);
-
-        if (col + 1 < grid.cols) {
-          addConstraint(constraints, positions, "structural", here, vertex(panel, row, col + 1));
-        }
-        if (row + 1 < grid.rows) {
-          addConstraint(constraints, positions, "structural", here, vertex(panel, row + 1, col));
-        }
-        if (row + 1 < grid.rows && col + 1 < grid.cols) {
-          addConstraint(constraints, positions, "shear", here, vertex(panel, row + 1, col + 1));
-        }
-        if (row + 1 < grid.rows && col > 0) {
-          addConstraint(constraints, positions, "shear", here, vertex(panel, row + 1, col - 1));
-        }
-        if (col + 2 < grid.cols) {
-          addConstraint(constraints, positions, "bend", here, vertex(panel, row, col + 2));
-        }
-        if (row + 2 < grid.rows) {
-          addConstraint(constraints, positions, "bend", here, vertex(panel, row + 2, col));
-        }
-
-        if (row + 1 < grid.rows && col + 1 < grid.cols) {
-          const a = vertex(panel, row, col);
-          const b = vertex(panel, row, col + 1);
-          const c = vertex(panel, row + 1, col);
-          const d = vertex(panel, row + 1, col + 1);
-
-          if (panel === 0) {
-            indices.push(a, c, b, b, c, d);
-          } else {
-            indices.push(a, b, c, b, d, c);
-          }
-        }
-      }
-    }
-  }
-
-  for (let row = 0; row < grid.rows; row += 1) {
-    addConstraint(constraints, positions, "seam", vertex(0, row, 0), vertex(1, row, 0), 0.04);
-    addConstraint(
-      constraints,
-      positions,
-      "seam",
-      vertex(0, row, grid.cols - 1),
-      vertex(1, row, grid.cols - 1),
-      0.04,
-    );
-  }
-
-  if (garment.category === "top" || garment.category === "shirt" || garment.category === "hoodie") {
-    const shoulderSpan = Math.floor(grid.cols * 0.28);
-    for (let col = 0; col < shoulderSpan; col += 1) {
-      addConstraint(constraints, positions, "seam", vertex(0, 0, col), vertex(1, 0, col), 0.04);
-      const mirrored = grid.cols - 1 - col;
-      addConstraint(
-        constraints,
-        positions,
-        "seam",
-        vertex(0, 0, mirrored),
-        vertex(1, 0, mirrored),
-        0.04,
-      );
-    }
-  }
-
-  const xs: number[] = [];
-  const ys: number[] = [];
-  const zs: number[] = [];
-  for (let index = 0; index < totalVertices; index += 1) {
-    xs.push(positions[index * 3]);
-    ys.push(positions[index * 3 + 1]);
-    zs.push(positions[index * 3 + 2]);
-  }
+  const frontVertexCount = context.textureSide.filter((side) => side === 0).length;
 
   return {
-    version: 1,
+    version: 2,
     coordinateSystem: "x-right-y-up-z-front-centimeters",
     category: garment.category,
     rows: grid.rows,
     cols: grid.cols,
-    panelVertexCount,
-    positions,
-    previousPositions,
-    inverseMass,
-    uv,
-    indices,
-    constraints,
-    boundsCm: {
-      width: Math.max(...xs) - Math.min(...xs),
-      height: Math.max(...ys) - Math.min(...ys),
-      depth: Math.max(...zs) - Math.min(...zs),
-    },
+    panelVertexCount: frontVertexCount,
+    positions: context.positions,
+    previousPositions: context.previousPositions,
+    inverseMass: context.inverseMass,
+    uv: context.uv,
+    indices: context.indices,
+    constraints: context.constraints,
+    textureSide: context.textureSide,
+    regionIds: context.regionIds,
+    regions: context.regions,
+    boundsCm: meshBounds(context.positions),
   };
 }
 
@@ -300,7 +924,13 @@ export function cloneGarmentMesh(mesh: GarmentMesh): GarmentMesh {
     inverseMass: [...mesh.inverseMass],
     uv: [...mesh.uv],
     indices: [...mesh.indices],
-    constraints: mesh.constraints.map((constraint) => ({ ...constraint, lambda: 0 })),
+    constraints: mesh.constraints.map((constraint) => ({
+      ...constraint,
+      lambda: 0,
+    })),
+    textureSide: mesh.textureSide ? [...mesh.textureSide] : undefined,
+    regionIds: mesh.regionIds ? [...mesh.regionIds] : undefined,
+    regions: mesh.regions?.map((region) => ({ ...region })),
     boundsCm: { ...mesh.boundsCm },
   };
 }

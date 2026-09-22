@@ -120,7 +120,11 @@ export default function BodyPage() {
         sourcePhotos[key] = savedBlob;
       }
 
-      const calibration = await calibrateBodyFromPhotos(sourcePhotos, parsed);
+      const calibration = await calibrateBodyFromPhotos(
+        sourcePhotos,
+        parsed,
+        state.optics ?? undefined,
+      );
       setStatus("saving");
 
       const media: Array<{ blob: Blob; ref: MediaRef }> = [];
@@ -173,7 +177,7 @@ export default function BodyPage() {
         <div>
           <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Meu corpo</h1>
           <p className="mt-2 max-w-2xl text-[var(--muted)]">
-            As quatro fotos viram silhuetas calibradas e um BodyMesh anatômico em centímetros, com torso, cabeça, braços e pernas separados. Use roupa justa, corpo inteiro e fundo simples.
+            No modo denso, deixe o celular parado e gire o corpo no mesmo ponto em 0°, 90°, 180° e 270°. As quatro máscaras completas viram um visual hull 3D; roupa justa, corpo inteiro e fundo simples continuam essenciais.
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--muted)]">
@@ -187,7 +191,7 @@ export default function BodyPage() {
             <div>
               <h2 className="text-lg font-bold">Fotos de calibração</h2>
               <p className="mt-1 text-sm text-[var(--muted)]">
-                Mantenha a câmera na mesma altura e preserve a mesma escala. Para escala métrica por vista, deixe o cartão MIRRO inteiro visível ao lado do corpo.
+                Para o visual hull, o celular deve ficar imóvel: a pessoa gira no mesmo lugar entre frente, lateral direita, costas e lateral esquerda. Se já houver calibração óptica salva, o cartão não precisa aparecer nessas quatro fotos.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -197,6 +201,12 @@ export default function BodyPage() {
               >
                 <Ruler size={15} aria-hidden="true" />
                 Imprimir cartão métrico
+              </Link>
+              <Link
+                href="/app/optics"
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[var(--line)] bg-white px-3 text-xs font-semibold hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--thread)]"
+              >
+                {state.optics ? "Óptica calibrada" : "Calibrar lente"}
               </Link>
               <span className="text-xs font-semibold text-[var(--muted)]">JPG, PNG ou WebP · até 12 MB</span>
             </div>
@@ -371,15 +381,19 @@ export default function BodyPage() {
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
-              {calibration.version === 5
-                ? "Realism Engine v5 pronto"
+              {calibration.version === 6
+                ? "Visual Hull v6 pronto"
+                : calibration.version === 5
+                  ? "Realism Engine v5 pronto"
                 : calibration.version === 4
                   ? "CameraRig v4 + BodyMesh prontos"
                   : "BodyMesh anatômico pronto"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 5 && calibration.cameraRig?.distortion
-                ? "Brown–Conrady ativo: lente corrigida antes da segmentação e da textura, color transfer local 3×8 e BodyMesh assimétrico de maior densidade."
+              {calibration.version === 6 && calibration.mesh.visualHull
+                ? "Reconstrução volumétrica ativa: voxel carving pelas quatro máscaras, marching tetrahedra, atlas multibanda e lente dedicada quando disponível."
+                : calibration.version === 5 && calibration.cameraRig?.distortion
+                  ? "Brown–Conrady ativo: lente corrigida antes da segmentação e da textura, color transfer local 3×8 e BodyMesh assimétrico de maior densidade."
                 : calibration.version === 4 && calibration.cameraRig
                   ? "Pinhole compartilhado ativo: intrínsecos da câmera e pose de cada vista foram refinados em conjunto; o corpo também recebeu equalização de exposição multi-view."
                   : calibration.version === 3
@@ -451,8 +465,10 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 5
-                  ? "Undistortion de lente, color field local e superfície assimétrica concluídos localmente."
+                {calibration.version === 6
+                  ? "Visual hull denso, atlas multibanda e calibração local concluídos neste navegador."
+                  : calibration.version === 5
+                    ? "Undistortion de lente, color field local e superfície assimétrica concluídos localmente."
                   : calibration.version === 4
                     ? "CameraRig pinhole, poses por vista e equalização de exposição concluídos localmente."
                     : calibration.version === 3

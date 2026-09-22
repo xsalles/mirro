@@ -308,7 +308,10 @@ export default function WardrobePage() {
                     value={physics[key as keyof typeof physics]}
                     aria-invalid={Boolean(errors[key])}
                     aria-describedby={errors[key] ? `${key}-error` : undefined}
-                    onChange={(e) => setPhysics((prev) => ({ ...prev, [key]: e.target.value }))}
+                    onChange={(e) => {
+                      setPhysics((prev) => ({ ...prev, [key]: e.target.value }));
+                      setForm((prev) => ({ ...prev, fabricLibraryId: "" }));
+                    }}
                   />
                   {unit ? (
                     <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-[var(--muted)]">

@@ -1,17 +1,25 @@
 "use client";
 
 import { undistortRgbaImage } from "./lens-distortion";
+import { scaleOpticalIntrinsics } from "./optical-calibration";
 import type {
   BodyCameraRig,
   BodySide,
   BodySilhouette,
   BodyTextureCalibration,
+  OpticalCalibrationProfile,
 } from "./types";
 
 type SourceImage = {
   width: number;
   height: number;
   data: Uint8ClampedArray;
+};
+
+type SourcePyramid = {
+  original: SourceImage;
+  blur2: SourceImage;
+  blur8: SourceImage;
 };
 
 const SIDES: BodySide[] = ["front", "right", "back", "left"];
@@ -33,15 +41,16 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function sampleProfile(profile: number[], t: number) {
-  if (!profile.length) return 0;
+function sampleProfile(profile: number[] | undefined, t: number) {
+  if (!profile?.length) return 0;
   const position = clamp(t, 0, 1) * (profile.length - 1);
   const low = Math.floor(position);
   const high = Math.min(profile.length - 1, low + 1);
   const mix = position - low;
   return (
     (profile[low] ?? 0) +
-    ((profile[high] ?? profile[low] ?? 0) - (profile[low] ?? 0)) *
+    ((profile[high] ?? profile[low] ?? 0) -
+      (profile[low] ?? 0)) *
       mix
   );
 }
@@ -59,12 +68,112 @@ async function loadImage(
   const canvas = document.createElement("canvas");
   canvas.width = targetWidth;
   canvas.height = targetHeight;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("Canvas 2D indisponível para textura corporal.");
+  const context = canvas.getContext("2d", {
+    willReadFrequently: true,
+  });
+  if (!context) {
+    throw new Error(
+      "Canvas 2D indisponível para textura corporal.",
+    );
+  }
 
-  context.drawImage(image, 0, 0, targetWidth, targetHeight);
-  const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
-  return { width: canvas.width, height: canvas.height, data };
+  context.drawImage(
+    image,
+    0,
+    0,
+    targetWidth,
+    targetHeight,
+  );
+  const data = context.getImageData(
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  ).data;
+  return {
+    width: canvas.width,
+    height: canvas.height,
+    data,
+  };
+}
+
+function boxBlur(source: SourceImage, radius: number): SourceImage {
+  if (radius <= 0) return source;
+  const { width, height } = source;
+  const horizontal = new Float64Array(source.data.length);
+  const output = new Uint8ClampedArray(source.data.length);
+  const windowSize = radius * 2 + 1;
+
+  for (let y = 0; y < height; y += 1) {
+    const sums = [0, 0, 0, 0];
+    for (let x = -radius; x <= radius; x += 1) {
+      const px = clamp(x, 0, width - 1);
+      const offset = (y * width + px) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        sums[channel] += source.data[offset + channel];
+      }
+    }
+
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        horizontal[offset + channel] =
+          sums[channel] / windowSize;
+      }
+
+      const removeX = clamp(x - radius, 0, width - 1);
+      const addX = clamp(x + radius + 1, 0, width - 1);
+      const removeOffset = (y * width + removeX) * 4;
+      const addOffset = (y * width + addX) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        sums[channel] +=
+          source.data[addOffset + channel] -
+          source.data[removeOffset + channel];
+      }
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    const sums = [0, 0, 0, 0];
+    for (let y = -radius; y <= radius; y += 1) {
+      const py = clamp(y, 0, height - 1);
+      const offset = (py * width + x) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        sums[channel] += horizontal[offset + channel];
+      }
+    }
+
+    for (let y = 0; y < height; y += 1) {
+      const offset = (y * width + x) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        output[offset + channel] = clamp(
+          Math.round(sums[channel] / windowSize),
+          0,
+          255,
+        );
+      }
+
+      const removeY = clamp(y - radius, 0, height - 1);
+      const addY = clamp(y + radius + 1, 0, height - 1);
+      const removeOffset = (removeY * width + x) * 4;
+      const addOffset = (addY * width + x) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        sums[channel] +=
+          horizontal[addOffset + channel] -
+          horizontal[removeOffset + channel];
+      }
+    }
+  }
+
+  return { width, height, data: output };
+}
+
+function buildPyramid(source: SourceImage): SourcePyramid {
+  return {
+    original: source,
+    blur2: boxBlur(source, 2),
+    blur8: boxBlur(source, 8),
+  };
 }
 
 function bilinearSample(
@@ -96,8 +205,10 @@ function bilinearSample(
 
   const out = [0, 0, 0, 0];
   for (let channel = 0; channel < 4; channel += 1) {
-    const top = a[channel] + (b[channel] - a[channel]) * tx;
-    const bottom = c[channel] + (d[channel] - c[channel]) * tx;
+    const top =
+      a[channel] + (b[channel] - a[channel]) * tx;
+    const bottom =
+      c[channel] + (d[channel] - c[channel]) * tx;
     out[channel] = top + (bottom - top) * ty;
   }
   return out as [number, number, number, number];
@@ -110,13 +221,24 @@ function sourcePoint(
   v: number,
 ) {
   const delta = wrapAngle(angle - SIDE_ANGLE[side]);
-  const clampedDelta = clamp(delta, -Math.PI / 2, Math.PI / 2);
+  const clampedDelta = clamp(
+    delta,
+    -Math.PI / 2,
+    Math.PI / 2,
+  );
   const horizontal = 0.5 + Math.sin(clampedDelta) * 0.5;
   const rowWidth = Math.max(
     1,
-    sampleProfile(silhouette.widthProfile, v) * silhouette.bounds.height,
+    sampleProfile(silhouette.widthProfile, v) *
+      silhouette.bounds.height,
   );
-  const centerX = silhouette.bounds.x + silhouette.bounds.width / 2;
+  const centerOffset =
+    sampleProfile(silhouette.centerProfile, v) *
+    silhouette.bounds.height;
+  const centerX =
+    silhouette.bounds.x +
+    silhouette.bounds.width / 2 +
+    centerOffset;
 
   return {
     x: centerX + (horizontal - 0.5) * rowWidth,
@@ -136,8 +258,10 @@ function sampleGridGain(
   const grid = calibration?.grid;
   if (!grid) return fallback;
 
-  const gx = clamp(horizontal, 0, 1) * Math.max(0, grid.columns - 1);
-  const gy = clamp(vertical, 0, 1) * Math.max(0, grid.rows - 1);
+  const gx =
+    clamp(horizontal, 0, 1) * Math.max(0, grid.columns - 1);
+  const gy =
+    clamp(vertical, 0, 1) * Math.max(0, grid.rows - 1);
   const x0 = Math.floor(gx);
   const y0 = Math.floor(gy);
   const x1 = Math.min(grid.columns - 1, x0 + 1);
@@ -148,22 +272,66 @@ function sampleGridGain(
     grid.gains[side][y * grid.columns + x] ?? fallback;
   const a = at(x0, y0);
   const b = at(x1, y0);
-  const cc = at(x0, y1);
+  const c = at(x0, y1);
   const d = at(x1, y1);
+
   return [0, 1, 2].map((channel) => {
-    const top = a[channel] + (b[channel] - a[channel]) * tx;
-    const bottom = cc[channel] + (d[channel] - cc[channel]) * tx;
+    const top =
+      a[channel] + (b[channel] - a[channel]) * tx;
+    const bottom =
+      c[channel] + (d[channel] - c[channel]) * tx;
     return top + (bottom - top) * ty;
   }) as [number, number, number];
 }
 
-function angularWeight(side: BodySide, angle: number, confidence: number) {
-  const delta = Math.abs(wrapAngle(angle - SIDE_ANGLE[side]));
-  const coverage = (72 * Math.PI) / 180;
+function angularWeight(
+  side: BodySide,
+  angle: number,
+  confidence: number,
+  coverageDegrees: number,
+  power: number,
+) {
+  const delta = Math.abs(
+    wrapAngle(angle - SIDE_ANGLE[side]),
+  );
+  const coverage = (coverageDegrees * Math.PI) / 180;
   if (delta >= coverage) return 0;
   const normalized = delta / coverage;
-  const feather = Math.cos(normalized * Math.PI * 0.5) ** 2;
-  return feather * feather * clamp(confidence, 0.2, 1);
+  const feather = Math.cos(
+    normalized * Math.PI * 0.5,
+  );
+  return (
+    Math.max(0, feather) ** power *
+    clamp(confidence, 0.2, 1)
+  );
+}
+
+function opticsForSource(
+  source: SourceImage,
+  optics: OpticalCalibrationProfile,
+) {
+  const sourceAspect = source.width / Math.max(1, source.height);
+  const opticsAspect =
+    optics.imageWidth / Math.max(1, optics.imageHeight);
+  if (
+    Math.abs(
+      sourceAspect / Math.max(1e-6, opticsAspect) - 1,
+    ) > 0.025
+  ) {
+    return null;
+  }
+
+  return scaleOpticalIntrinsics(
+    optics.intrinsics,
+    {
+      width: optics.imageWidth,
+      height: optics.imageHeight,
+    },
+    {
+      width: source.width,
+      height: source.height,
+    },
+  );
 }
 
 export async function buildBodyTextureAtlas(params: {
@@ -171,44 +339,61 @@ export async function buildBodyTextureAtlas(params: {
   silhouettes: Record<BodySide, BodySilhouette>;
   textureCalibration?: BodyTextureCalibration;
   cameraRig?: BodyCameraRig;
+  optics?: OpticalCalibrationProfile | null;
   width?: number;
   height?: number;
 }) {
   const width = params.width ?? 1024;
   const height = params.height ?? 768;
+
   const loadedEntries = await Promise.all(
     SIDES.map(async (side) => {
       const url = params.urls[side];
       if (!url) return [side, null] as const;
       const silhouette = params.silhouettes[side];
-      const source = await loadImage(
+      let source = await loadImage(
         url,
         silhouette.sourceWidth,
         silhouette.sourceHeight,
       );
-      if (params.cameraRig?.distortion) {
-        return [
-          side,
-          undistortRgbaImage(
+
+      if (params.optics) {
+        const intrinsics = opticsForSource(
+          source,
+          params.optics,
+        );
+        if (intrinsics) {
+          source = undistortRgbaImage(
             source,
-            params.cameraRig.intrinsics,
-            params.cameraRig.distortion,
-          ),
-        ] as const;
+            intrinsics,
+            params.optics.distortion,
+          );
+        }
+      } else if (params.cameraRig?.distortion) {
+        source = undistortRgbaImage(
+          source,
+          params.cameraRig.intrinsics,
+          params.cameraRig.distortion,
+        );
       }
-      return [side, source] as const;
+
+      return [side, buildPyramid(source)] as const;
     }),
   );
-  const sources = Object.fromEntries(loadedEntries) as Partial<
-    Record<BodySide, SourceImage | null>
-  >;
+
+  const sources = Object.fromEntries(
+    loadedEntries,
+  ) as Partial<Record<BodySide, SourcePyramid | null>>;
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas 2D indisponível para atlas corporal.");
-
+  if (!context) {
+    throw new Error(
+      "Canvas 2D indisponível para atlas corporal.",
+    );
+  }
   const output = context.createImageData(width, height);
 
   for (let y = 0; y < height; y += 1) {
@@ -217,21 +402,73 @@ export async function buildBodyTextureAtlas(params: {
     for (let x = 0; x < width; x += 1) {
       const u = x / Math.max(1, width - 1);
       const angle = (u - 0.5) * Math.PI * 2;
-      let totalWeight = 0;
-      let r = 0;
-      let g = 0;
-      let b = 0;
+
+      let lowWeight = 0;
+      let midWeight = 0;
+      let highWeight = 0;
+      let lowR = 0;
+      let lowG = 0;
+      let lowB = 0;
+      let midR = 0;
+      let midG = 0;
+      let midB = 0;
+      let highR = 0;
+      let highG = 0;
+      let highB = 0;
       let alpha = 0;
+      let alphaWeight = 0;
 
       for (const side of SIDES) {
-        const source = sources[side];
-        if (!source) continue;
+        const pyramid = sources[side];
+        if (!pyramid) continue;
         const silhouette = params.silhouettes[side];
-        const weight = angularWeight(side, angle, silhouette.confidence);
-        if (weight <= 0) continue;
+        const lowW = angularWeight(
+          side,
+          angle,
+          silhouette.confidence,
+          92,
+          1.4,
+        );
+        const midW = angularWeight(
+          side,
+          angle,
+          silhouette.confidence,
+          78,
+          2.4,
+        );
+        const highW = angularWeight(
+          side,
+          angle,
+          silhouette.confidence,
+          66,
+          4.2,
+        );
 
-        const point = sourcePoint(silhouette, side, angle, v);
-        const sampled = bilinearSample(source, point.x, point.y);
+        if (lowW <= 0 && midW <= 0 && highW <= 0) {
+          continue;
+        }
+
+        const point = sourcePoint(
+          silhouette,
+          side,
+          angle,
+          v,
+        );
+        const original = bilinearSample(
+          pyramid.original,
+          point.x,
+          point.y,
+        );
+        const blur2 = bilinearSample(
+          pyramid.blur2,
+          point.x,
+          point.y,
+        );
+        const blur8 = bilinearSample(
+          pyramid.blur8,
+          point.x,
+          point.y,
+        );
         const localHorizontal = clamp(
           (point.x - silhouette.bounds.x) /
             Math.max(1, silhouette.bounds.width),
@@ -245,23 +482,76 @@ export async function buildBodyTextureAtlas(params: {
           v,
         );
 
-        r += sampled[0] * gain[0] * weight;
-        g += sampled[1] * gain[1] * weight;
-        b += sampled[2] * gain[2] * weight;
-        alpha += sampled[3] * weight;
-        totalWeight += weight;
+        if (lowW > 0) {
+          lowR += blur8[0] * gain[0] * lowW;
+          lowG += blur8[1] * gain[1] * lowW;
+          lowB += blur8[2] * gain[2] * lowW;
+          lowWeight += lowW;
+          alpha += original[3] * lowW;
+          alphaWeight += lowW;
+        }
+
+        if (midW > 0) {
+          midR +=
+            (blur2[0] - blur8[0]) * gain[0] * midW;
+          midG +=
+            (blur2[1] - blur8[1]) * gain[1] * midW;
+          midB +=
+            (blur2[2] - blur8[2]) * gain[2] * midW;
+          midWeight += midW;
+        }
+
+        if (highW > 0) {
+          highR +=
+            (original[0] - blur2[0]) *
+            gain[0] *
+            highW;
+          highG +=
+            (original[1] - blur2[1]) *
+            gain[1] *
+            highW;
+          highB +=
+            (original[2] - blur2[2]) *
+            gain[2] *
+            highW;
+          highWeight += highW;
+        }
       }
 
       const offset = (y * width + x) * 4;
-      if (totalWeight > 1e-5) {
-        output.data[offset] = clamp(Math.round(r / totalWeight), 0, 255);
-        output.data[offset + 1] = clamp(Math.round(g / totalWeight), 0, 255);
-        output.data[offset + 2] = clamp(Math.round(b / totalWeight), 0, 255);
-        output.data[offset + 3] = clamp(
-          Math.round(alpha / totalWeight),
+      if (lowWeight > 1e-5) {
+        const r =
+          lowR / lowWeight +
+          (midWeight > 1e-5 ? midR / midWeight : 0) +
+          (highWeight > 1e-5 ? highR / highWeight : 0);
+        const g =
+          lowG / lowWeight +
+          (midWeight > 1e-5 ? midG / midWeight : 0) +
+          (highWeight > 1e-5 ? highG / highWeight : 0);
+        const b =
+          lowB / lowWeight +
+          (midWeight > 1e-5 ? midB / midWeight : 0) +
+          (highWeight > 1e-5 ? highB / highWeight : 0);
+
+        output.data[offset] = clamp(Math.round(r), 0, 255);
+        output.data[offset + 1] = clamp(
+          Math.round(g),
           0,
           255,
         );
+        output.data[offset + 2] = clamp(
+          Math.round(b),
+          0,
+          255,
+        );
+        output.data[offset + 3] =
+          alphaWeight > 1e-5
+            ? clamp(
+                Math.round(alpha / alphaWeight),
+                0,
+                255,
+              )
+            : 0;
       }
     }
   }
@@ -278,7 +568,11 @@ export function bodyAtlasUvs(
   const uv = new Array<number>((vertices.length / 3) * 2);
   const halfHeight = heightCm / 2;
 
-  for (let vertex = 0; vertex < vertices.length / 3; vertex += 1) {
+  for (
+    let vertex = 0;
+    vertex < vertices.length / 3;
+    vertex += 1
+  ) {
     const offset = vertex * 3;
     const x = vertices[offset];
     const y = vertices[offset + 1];
@@ -292,7 +586,8 @@ export function bodyAtlasUvs(
       ? sampleProfile(centerZProfile, v)
       : 0;
     const angle = Math.atan2(x, z - centerZ);
-    const u = ((angle / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
+    const u =
+      ((angle / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
 
     uv[vertex * 2] = u;
     uv[vertex * 2 + 1] = v;

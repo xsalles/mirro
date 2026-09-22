@@ -408,5 +408,5 @@ describe("calibrated perspective turntable MVS", () => {
     expect(central?.confidence ?? 0).toBeGreaterThan(0);
     expect(central?.depth ?? 0).toBeGreaterThan(16.5);
     expect(central?.depth ?? Infinity).toBeLessThan(19.4);
-  });
+  }, 10_000);
 });

@@ -169,6 +169,11 @@ export default function BodyPage() {
   }
 
   const calibration = current?.calibration;
+  const visualHull = calibration?.mesh.visualHull;
+  const activeIntrinsics =
+    calibration?.cameraRig?.intrinsics ?? state.optics?.intrinsics;
+  const activeDistortion =
+    calibration?.cameraRig?.distortion ?? state.optics?.distortion;
   const hasPendingPhotos = Object.keys(files).length > 0;
 
   return (
@@ -401,18 +406,30 @@ export default function BodyPage() {
                   : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-7">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
               </div>
               <div>
                 <dt className="text-xs font-semibold text-white/55">Vértices</dt>
-                <dd className="mt-1 text-xl font-bold tabular-nums">{(calibration.mesh.vertices.length / 3).toLocaleString("pt-BR")}</dd>
+                <dd className="mt-1 text-xl font-bold tabular-nums">
+                  {((visualHull?.vertices.length ?? calibration.mesh.vertices.length) / 3).toLocaleString("pt-BR")}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs font-semibold text-white/55">Triângulos</dt>
-                <dd className="mt-1 text-xl font-bold tabular-nums">{(calibration.mesh.indices.length / 3).toLocaleString("pt-BR")}</dd>
+                <dd className="mt-1 text-xl font-bold tabular-nums">
+                  {((visualHull?.indices.length ?? calibration.mesh.indices.length) / 3).toLocaleString("pt-BR")}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Voxels ocupados</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {visualHull
+                    ? `${visualHull.occupiedVoxelCount.toLocaleString("pt-BR")} · ${visualHull.resolution.x}×${visualHull.resolution.y}×${visualHull.resolution.z}`
+                    : "—"}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs font-semibold text-white/55">Alvo métrico</dt>
@@ -429,16 +446,16 @@ export default function BodyPage() {
               <div>
                 <dt className="text-xs font-semibold text-white/55">Óptica</dt>
                 <dd className="mt-1 text-sm font-bold tabular-nums">
-                  {calibration.cameraRig
-                    ? `f ${Math.round((calibration.cameraRig.intrinsics.fx + calibration.cameraRig.intrinsics.fy) / 2)} px · ${calibration.cameraRig.rmsReprojectionErrorPx.toFixed(2)} px RMS`
+                  {activeIntrinsics
+                    ? `f ${Math.round((activeIntrinsics.fx + activeIntrinsics.fy) / 2)} px${calibration.cameraRig ? ` · ${calibration.cameraRig.rmsReprojectionErrorPx.toFixed(2)} px RMS` : " · perfil dedicado"}`
                     : "fallback métrico"}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs font-semibold text-white/55">Lente</dt>
                 <dd className="mt-1 text-sm font-bold tabular-nums">
-                  {calibration.cameraRig?.distortion
-                    ? `k1 ${calibration.cameraRig.distortion.k1.toFixed(3)} · ΔRMS ${(calibration.cameraRig.distortionRmsImprovementPx ?? 0).toFixed(2)} px`
+                  {activeDistortion
+                    ? `k1 ${activeDistortion.k1.toFixed(3)}${state.optics ? " · dedicada" : ` · ΔRMS ${(calibration.cameraRig?.distortionRmsImprovementPx ?? 0).toFixed(2)} px`}`
                     : "sem correção"}
                 </dd>
               </div>

@@ -14,7 +14,7 @@ export default function DashboardPage() {
       <div><h1 className="font-display text-4xl font-bold tracking-[-.04em] sm:text-5xl">Seu espelho começa aqui.</h1><p className="mt-3 max-w-2xl text-[var(--muted)]">Monte a base corporal, digitalize suas peças e depois combine tudo no provador.</p></div>
       <section className="grid gap-4 md:grid-cols-3" aria-label="Progresso de configuração">
         {[
-          { href: "/app/body", icon: ScanLine, title: "Meu corpo", value: bodyReady ? "BodyMesh pronto" : "Pendente", copy: "8 vistas · 45° + SDF 3D", done: bodyReady },
+          { href: "/app/body", icon: ScanLine, title: "Meu corpo", value: bodyReady ? "BodyMesh pronto" : "Pendente", copy: "8 vistas · ZNCC MVS + TSDF", done: bodyReady },
           { href: "/app/wardrobe", icon: Shirt, title: "Guarda-roupa", value: `${garmentCount} ${garmentCount === 1 ? "peça" : "peças"}`, copy: "Frente e costas", done: garmentCount > 0 },
           { href: "/app/try-on", icon: Sparkles, title: "Experimentar", value: bodyReady && garmentCount ? "Liberado" : "Aguardando", copy: "BodyMesh + pelo menos 1 peça", done: bodyReady && garmentCount > 0 },
         ].map(({ href, icon: Icon, title, value, copy, done }) => (

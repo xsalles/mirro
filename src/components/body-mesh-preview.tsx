@@ -15,10 +15,14 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     const mesh = calibration.mesh;
     const surface = mesh.visualHull;
     const surfaceVertices =
+      surface?.multiViewStereo?.surfaceVertices ??
       surface?.photometricRefinement?.surfaceVertices ??
       surface?.vertices ??
       mesh.vertices;
-    const surfaceIndices = surface?.indices ?? mesh.indices;
+    const surfaceIndices =
+      surface?.multiViewStereo?.surfaceIndices ??
+      surface?.indices ??
+      mesh.indices;
     const width = canvas.width;
     const height = canvas.height;
     const rootStyle = getComputedStyle(document.documentElement);
@@ -101,9 +105,11 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
     context.font = "600 11px Manrope, sans-serif";
     context.textAlign = "right";
     context.fillText(
-      surface
-        ? `${mesh.boundsCm.height.toFixed(0)} cm · visual hull ${(surface.indices.length / 3).toLocaleString("pt-BR")} tri`
-        : `${mesh.boundsCm.height.toFixed(0)} cm · v${mesh.version}`,
+      surface?.multiViewStereo
+        ? `${mesh.boundsCm.height.toFixed(0)} cm · MVS ${(surface.multiViewStereo.surfaceIndices.length / 3).toLocaleString("pt-BR")} tri`
+        : surface
+          ? `${mesh.boundsCm.height.toFixed(0)} cm · visual hull ${(surface.indices.length / 3).toLocaleString("pt-BR")} tri`
+          : `${mesh.boundsCm.height.toFixed(0)} cm · v${mesh.version}`,
       width - 16,
       20,
     );
@@ -119,9 +125,12 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.version === 7 &&
-        calibration.mesh.visualHull?.signedDistanceField
-          ? "Scanner v7: 8 silhuetas a cada 45°, visual hull apertado nas diagonais e SDF 3D persistido para colisão por gradiente."
+        {calibration.version === 8 &&
+        calibration.mesh.visualHull?.multiViewStereo
+          ? "Scanner v8: 8 depth maps por ZNCC, consistência cruzada e TSDF fusionado para a superfície visual; o SDF conservador continua protegendo a colisão."
+          : calibration.version === 7 &&
+              calibration.mesh.visualHull?.signedDistanceField
+            ? "Scanner v7: 8 silhuetas a cada 45°, visual hull apertado nas diagonais e SDF 3D persistido para colisão por gradiente."
           : calibration.mesh.visualHull
             ? "Visual hull v6: volume esculpido pelas quatro máscaras completas e superfície extraída por marching tetrahedra com suavização Taubin."
           : calibration.mesh.version === 4

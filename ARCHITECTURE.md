@@ -37,7 +37,7 @@ After the v4 shared-pinhole solve, MIRRO now estimates Brown–Conrady radial/ta
 
 MIRRO now also has a dedicated optical workflow. Six to twelve target photos at varied tilts/positions solve shared intrinsics and Brown–Conrady distortion independently from the body session. Only the derived optical profile is persisted; calibration photos are not stored. Body capture can reuse this lens profile and therefore does not require the target to be present in all four body photos.
 
-Dense reconstruction uses a different capture contract: the phone remains fixed while the person turns in place through 0°/90°/180°/270°. Moving the target between body views does not create a shared world frame and must not be treated as multi-view camera registration.
+Dense reconstruction uses a different capture contract: the phone remains fixed while the person turns in place through eight 45° stops from 0° through 315°. Moving the target between body views does not create a shared world frame and must not be treated as multi-view camera registration.
 
 ## Garment image + calibration pipeline — implemented
 
@@ -146,9 +146,9 @@ The dependency-free Canvas renderer remains as **Malha técnica** for debugging 
 
 The renderer materially improves realism, but exact visual fit still depends on capture calibration, anatomical approximation and fabric-parameter quality.
 
-## Surface reconstruction v7
+## Surface reconstruction v7 → v8
 
-The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 introduced four-mask carving. V7 expands capture to eight views at 45° intervals; each diagonal silhouette adds another projection half-space and cuts away the oversized diagonal corners left by four orthogonal views. A voxel survives only when its orthogonal projection is inside all four body masks. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
+The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 introduced four-mask carving. V7 expands capture to eight views at 45° intervals; each diagonal silhouette adds another projection half-space and cuts away the oversized diagonal corners left by four orthogonal views. A voxel survives only when its projection is inside every available body mask used by the eight-view carving stage. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
 
 The visual hull is used by the PBR body renderer and persisted together with RLE-compressed voxel occupancy. V7 also computes an exact separable 3D Euclidean distance transform for both inside and outside voxels, quantizes the signed field at 0.05 cm, and persists it for smooth cloth collision. The anatomical BodyMesh remains available for semantic landmarks, garment initialization and fallback.
 
@@ -156,11 +156,34 @@ The collision hull remains classical shape-from-silhouette. V7 adds a conservati
 
 This is not yet a general dense-stereo reconstruction: the current sweep is radial, torso-scoped and uses the known fixed-camera turntable geometry. Concavities or hidden detail without stable multi-view texture remain unrecoverable.
 
+## Classical multi-view stereo v8
+
+V8 adds a real dense correspondence stage above the conservative v7 visual hull.
+
+1. Each of the eight 45° views builds a bounded working depth map rather than searching every source-image pixel.
+2. Every foreground sample starts at the front intersection of the v7 SDF and tests only inward depth hypotheses. This prevents MVS from inventing geometry outside the silhouette envelope.
+3. A sparse 3×3 patch is reprojected first into the ±45° neighboring views. MIRRO uses zero-mean normalized cross correlation (ZNCC), which is less sensitive to exposure offsets than raw RGB error. ±90° neighbors are evaluated only when the nearest pair does not provide enough valid correlation.
+4. Best-vs-second-best correlation margin produces an ambiguity score. Low-texture, ambiguous and weak-correlation samples are discarded instead of filled heuristically.
+5. A local depth median/support pass suppresses isolated speckles while retaining confidence.
+6. Surviving depth samples are reprojected into neighboring depth maps. Samples that disagree geometrically lose confidence or are rejected.
+7. Depth maps are quantized to 0.05 cm and confidence to 8-bit values for bounded IndexedDB storage.
+8. Fusion builds a truncated signed-distance field only near the v7 surface band. Deep interior is skipped because it cannot change the zero level-set.
+9. The fused TSDF is clamped against the v7 SDF with a conservative max operation, so MVS can carve inward but cannot expand the body beyond the silhouette-derived physical envelope.
+10. The TSDF zero crossing is extracted with interpolated marching tetrahedra and recomputed normals. PBR prefers this MVS surface, while XPBD continues to collide against the conservative v7 SDF.
+
+### Projection model
+
+When a compatible reusable optical profile exists, V8 scales its pinhole intrinsics to each scan image and estimates the fixed-camera turntable distance from focal length, observed body height and visual-hull front depth. Every MVS ray/reprojection then uses the same perspective camera model for plane sweep, cross-view consistency and TSDF fusion.
+
+If optics are unavailable or image aspect ratio does not match, the solver deliberately falls back to the metric-orthographic turntable model instead of mixing projection models across views.
+
+This is classical MVS, not generative reconstruction. It is still more constrained than general PatchMatch MVS: the camera is fixed, the person rotates in known 45° steps, depth hypotheses are bounded by the visual hull, and motion/specular/textureless regions may fall back to v7.
+
 ## Engine roadmap
 
-- Add optional classical photometric surface refinement / plane-sweep stereo using the known 45° turntable geometry.
-- Add confidence-weighted multi-view photoconsistency so lighting changes do not overrule silhouette geometry.
-- Move dense reconstruction/SDF generation into a Worker/WASM path if mobile capture latency becomes significant.
+- Refine the turntable camera center/extrinsics jointly across all eight views instead of estimating distance independently from body height.
+- Add coarse-to-fine/subpixel depth hypotheses and stronger robust patch costs (Census/gradient terms) for weak texture.
+- Move MVS/TSDF generation into a Worker/WASM path when mobile scan latency justifies the transfer cost.
 - Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
 - Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
 - Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.

@@ -9,6 +9,8 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - Confidence-weighted multi-view body calibration
 - Reusable 6–12 frame optical calibration with shared intrinsics + Brown–Conrady k1/k2/k3/p1/p2
 - BodyCalibration v7 with 8-view voxel carving, marching-tetrahedra visual hull, exact 3D signed-distance field, compressed occupancy and conservative turntable photometric surface refinement
+- BodyCalibration v8 with per-view ZNCC depth maps, cross-view consistency, confidence filtering and conservative TSDF fusion
+- MVS uses calibrated turntable perspective from the saved optical profile when compatible, with metric-orthographic fallback
 - Garment front/back alpha calibration from the user's real photos
 - Semantic GarmentMesh: torso + sleeves for tops; waistband + split legs/crotch for bottoms
 - XPBD structural / shear / bend / seam constraints
@@ -22,7 +24,7 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - IndexedDB-only private local storage
 - Responsive product shell
 
-The current **Físico 3D beta** now has reusable multi-frame optical calibration, fixed-camera person-turntable capture at 45° increments, an eight-silhouette visual hull, exact EDT signed-distance collision, gradient-domain seam optimization and the existing semantic XPBD garment pipeline. It still should not be sold as exact photoreal fit: a four-view visual hull cannot recover concavities or hidden surface detail, and fabric-library values remain engineering presets unless the user supplies measurements. See `ARCHITECTURE.md`.
+The current **Físico 3D beta** now adds classical multi-view stereo on top of the eight-view scan: bounded ZNCC plane sweep, confidence/ambiguity rejection, cross-view depth consistency and conservative TSDF fusion. When the saved optical profile matches the scan, MVS uses calibrated turntable perspective; otherwise it falls back to metric orthographic projection. The v7 SDF remains the physical cloth-collision envelope. It still should not be sold as exact photoreal fit: eight-view MVS can recover only texture-supported geometry inside the conservative silhouette envelope; textureless, specular, self-occluded or moving regions still fall back to the visual hull, and fabric-library values remain engineering presets unless the user supplies measurements. See `ARCHITECTURE.md`.
 
 ## Development
 

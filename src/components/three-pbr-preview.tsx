@@ -159,18 +159,24 @@ export function ThreePbrPreview({
       };
 
       const denseSurface = bodyMesh.visualHull;
+      const multiViewStereo =
+        denseSurface?.multiViewStereo;
       const refinedSurface =
         denseSurface?.photometricRefinement;
       const bodyVertices =
+        multiViewStereo?.surfaceVertices ??
         refinedSurface?.surfaceVertices ??
         denseSurface?.vertices ??
         bodyMesh.vertices;
       const bodyNormals =
+        multiViewStereo?.surfaceNormals ??
         refinedSurface?.surfaceNormals ??
         denseSurface?.normals ??
         bodyMesh.normals;
       const bodyIndices =
-        denseSurface?.indices ?? bodyMesh.indices;
+        multiViewStereo?.surfaceIndices ??
+        denseSurface?.indices ??
+        bodyMesh.indices;
 
       const bodyGeometry = new THREE.BufferGeometry();
       bodyGeometry.setAttribute(
@@ -429,9 +435,12 @@ export function ThreePbrPreview({
             : "Inicializando PBR…"}
       </div>
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        {bodyCalibration?.version === 7 &&
-        bodyMesh.visualHull?.signedDistanceField
-          ? "8-view hull + SDF 3D + atlas multibanda com screened-Poisson, depth buffer e PBR do tecido."
+        {bodyCalibration?.version === 8 &&
+        bodyMesh.visualHull?.multiViewStereo
+          ? "MVS v8: depth maps ZNCC + consistência cruzada + TSDF fusionado, atlas Poisson e PBR."
+          : bodyCalibration?.version === 7 &&
+              bodyMesh.visualHull?.signedDistanceField
+            ? "8-view hull + SDF 3D + atlas multibanda com screened-Poisson, depth buffer e PBR do tecido."
           : bodyMesh.visualHull
             ? "Visual hull denso + atlas corporal multibanda 360°, depth buffer e PBR do tecido."
             : "Atlas corporal multibanda 360° com correção local de cor, depth buffer e PBR do tecido."}

@@ -268,6 +268,7 @@ describe("classical multi-view stereo + TSDF", () => {
     expect(mvs).not.toBeNull();
     if (!mvs) return;
 
+    expect(mvs.projectionModel).toBe("metric-orthographic");
     expect(mvs.validDepthCount).toBeGreaterThan(500);
     expect(mvs.meanConfidence).toBeGreaterThan(0.18);
     expect(mvs.crossViewConsistency).toBeGreaterThan(0.2);

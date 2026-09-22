@@ -194,7 +194,7 @@ export default function BodyPage() {
         <div>
           <h1 className="font-display text-4xl font-bold tracking-[-.04em]">Meu corpo</h1>
           <p className="mt-2 max-w-2xl text-[var(--muted)]">
-            Para o scan v7, deixe o celular completamente parado e gire o corpo no mesmo ponto em passos de 45°: 0°, 45°, 90°, 135°, 180°, 225°, 270° e 315°. As oito máscaras apertam o visual hull nas diagonais; roupa justa, corpo inteiro e fundo simples continuam essenciais.
+            Para o scan v8, deixe o celular completamente parado e gire o corpo no mesmo ponto em passos de 45°: 0°, 45°, 90°, 135°, 180°, 225°, 270° e 315°. As oito máscaras formam o envelope e o MVS usa textura entre vistas para refinar profundidade; roupa justa, corpo inteiro e fundo simples continuam essenciais.
           </p>
         </div>
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--muted)]">
@@ -426,7 +426,7 @@ export default function BodyPage() {
                   : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-11">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-12">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -448,6 +448,16 @@ export default function BodyPage() {
                 <dd className="mt-1 text-sm font-bold tabular-nums">
                   {visualHull
                     ? `${visualHull.occupiedVoxelCount.toLocaleString("pt-BR")} · ${visualHull.resolution.x}×${visualHull.resolution.y}×${visualHull.resolution.z}`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Projeção MVS</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs
+                    ? mvs.projectionModel === "calibrated-turntable-perspective"
+                      ? `perspectiva · ${Math.round(mvs.meanCameraDistanceCm ?? 0)} cm`
+                      : "ortográfica métrica"
                     : "—"}
                 </dd>
               </div>

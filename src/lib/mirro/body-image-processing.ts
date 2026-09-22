@@ -5,7 +5,7 @@ import {
 } from "./body-calibration";
 import { buildBodyVisualHull } from "./body-visual-hull";
 import { refineVisualHullPhotometrically } from "./body-photometric-refinement";
-import { buildClassicalMultiViewStereo } from "./body-mvs";
+import { buildClassicalMultiViewStereoAsync } from "./body-mvs-client";
 import {
   BODY_VIEW_LABEL,
   BODY_VIEW_SEQUENCE,
@@ -407,8 +407,11 @@ export async function calibrateBodyFromPhotos(
 
         if (hasAllDenseInputs) {
           try {
-            const multiViewStereo =
-              buildClassicalMultiViewStereo({
+            const {
+              result: multiViewStereo,
+              diagnostics: mvsDiagnostics,
+            } =
+              await buildClassicalMultiViewStereoAsync({
                 hull: visualHull,
                 images: denseImages as Record<
                   BodyViewId,
@@ -433,7 +436,10 @@ export async function calibrateBodyFromPhotos(
               };
             } else {
               multiViewStereoWarning =
-                "As oito vistas não tiveram textura/correspondência suficiente para gerar um TSDF MVS confiável; o MIRRO manteve o visual hull + SDF.";
+                mvsDiagnostics.rejection ===
+                "insufficient-depth-confidence"
+                  ? "O MVS robusto rejeitou profundidades com pouca textura/consistência; o MIRRO manteve o visual hull + SDF."
+                  : "As oito vistas não tiveram correspondência suficiente para gerar um TSDF MVS confiável; o MIRRO manteve o visual hull + SDF.";
             }
           } catch {
             multiViewStereoWarning =
@@ -483,31 +489,38 @@ export async function calibrateBodyFromPhotos(
   const hasMultiViewStereo = Boolean(
     visualHull?.multiViewStereo,
   );
+  const hasRobustMvs = Boolean(
+    visualHull?.multiViewStereo?.version === 2,
+  );
   const hasBodyLens = cameraRig?.version === 2;
   const version: BodyCalibration["version"] =
-    hasMultiViewStereo
-      ? 8
-      : hasEightViewSdf
-        ? 7
-        : hasVisualHull
-          ? 6
-          : hasBodyLens
-            ? 5
-            : cameraRig
-              ? 4
-              : base.version;
+    hasRobustMvs
+      ? 9
+      : hasMultiViewStereo
+        ? 8
+        : hasEightViewSdf
+          ? 7
+          : hasVisualHull
+            ? 6
+            : hasBodyLens
+              ? 5
+              : cameraRig
+                ? 4
+                : base.version;
   const method: BodyCalibration["method"] =
-    hasMultiViewStereo
-      ? "turntable-zncc-tsdf-mvs-v8"
-      : hasEightViewSdf
-        ? "eight-view-sdf-gradient-seams-v7"
-        : hasVisualHull
-          ? "visual-hull-multiband-v6"
-          : hasBodyLens
-            ? "lens-undistorted-local-color-surface-v5"
-            : cameraRig
-              ? "pinhole-bundle-anatomical-v4"
-              : base.method;
+    hasRobustMvs
+      ? "robust-subpixel-worker-mvs-v9"
+      : hasMultiViewStereo
+        ? "turntable-zncc-tsdf-mvs-v8"
+        : hasEightViewSdf
+          ? "eight-view-sdf-gradient-seams-v7"
+          : hasVisualHull
+            ? "visual-hull-multiband-v6"
+            : hasBodyLens
+              ? "lens-undistorted-local-color-surface-v5"
+              : cameraRig
+                ? "pinhole-bundle-anatomical-v4"
+                : base.method;
 
   const opticalScore = optics
     ? optics.conditionScore * 0.04

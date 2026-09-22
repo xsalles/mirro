@@ -275,6 +275,24 @@ export function simulateClothStep(params: {
 
     if (iteration % 3 === 2 || iteration === iterations - 1) {
       selfCollisions += solveGarmentSelfCollisions(mesh, material);
+
+      // Self-collision is solved after body collision and can push a fold back
+      // into an anatomical primitive. Re-project once so each solver iteration
+      // finishes satisfying the body non-penetration constraint.
+      for (let particle = 0; particle < mesh.inverseMass.length; particle += 1) {
+        if (mesh.inverseMass[particle] <= 0) continue;
+        if (
+          projectParticleOutsideBody(
+            bodyMesh,
+            mesh.positions,
+            particle,
+            material.thicknessCm,
+          )
+        ) {
+          collisions += 1;
+          applyFrictionAfterCollision(mesh, particle, material.friction);
+        }
+      }
     }
   }
 

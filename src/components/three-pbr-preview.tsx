@@ -423,9 +423,12 @@ export function ThreePbrPreview({
             : "Inicializando PBR…"}
       </div>
       <figcaption className="border-t border-[var(--line)] px-4 py-3 text-xs leading-5 text-[var(--muted)]">
-        {bodyMesh.visualHull
-          ? "Visual hull denso + atlas corporal multibanda 360°, depth buffer e PBR do tecido."
-          : "Atlas corporal multibanda 360° com correção local de cor, depth buffer e PBR do tecido."}
+        {bodyCalibration?.version === 7 &&
+        bodyMesh.visualHull?.signedDistanceField
+          ? "8-view hull + SDF 3D + atlas multibanda com screened-Poisson, depth buffer e PBR do tecido."
+          : bodyMesh.visualHull
+            ? "Visual hull denso + atlas corporal multibanda 360°, depth buffer e PBR do tecido."
+            : "Atlas corporal multibanda 360° com correção local de cor, depth buffer e PBR do tecido."}
       </figcaption>
     </figure>
   );

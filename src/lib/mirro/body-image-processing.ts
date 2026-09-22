@@ -23,7 +23,7 @@ const SIDE_LABELS: Record<BodySide, string> = {
   left: "lateral esquerda",
 };
 
-async function decodeForCalibration(blob: Blob): Promise<RgbaImage> {
+export async function decodeForCalibration(blob: Blob): Promise<RgbaImage> {
   const bitmap = await createImageBitmap(blob);
   try {
     const scale = Math.min(1, MAX_PROCESSING_SIDE / Math.max(bitmap.width, bitmap.height));

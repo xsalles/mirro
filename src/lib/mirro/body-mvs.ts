@@ -694,7 +694,7 @@ const PATCH_OFFSETS = [
   [2, 2],
 ] as const;
 
-function patchZncc(params: {
+function robustPatchScore(params: {
   referenceView: BodyViewId;
   targetView: BodyViewId;
   reference: MvsView;
@@ -704,8 +704,72 @@ function patchZncc(params: {
   centerPixelY: number;
   candidateDepthCm: number;
 }) {
+  const referenceCenterCoordinate =
+    pixelToViewCoordinates(
+      params.reference,
+      params.bodyHeightCm,
+      params.centerPixelX,
+      params.centerPixelY,
+      params.candidateDepthCm,
+    );
+  const centerWorld = viewCoordinatesToWorld(
+    params.referenceView,
+    referenceCenterCoordinate.horizontalCm,
+    referenceCenterCoordinate.y,
+    params.candidateDepthCm,
+  );
+  const targetCenter = worldToPixel(
+    params.targetView,
+    params.target,
+    params.bodyHeightCm,
+    centerWorld[0],
+    centerWorld[1],
+    centerWorld[2],
+  );
+
+  if (
+    !maskContains(
+      params.reference,
+      params.centerPixelX,
+      params.centerPixelY,
+    ) ||
+    !maskContains(
+      params.target,
+      targetCenter.x,
+      targetCenter.y,
+    )
+  ) {
+    return null;
+  }
+
+  const refCenter = bilinear(
+    params.reference.luminance,
+    params.reference.image.width,
+    params.reference.image.height,
+    params.centerPixelX,
+    params.centerPixelY,
+  );
+  const targetCenterValue = bilinear(
+    params.target.luminance,
+    params.target.image.width,
+    params.target.image.height,
+    targetCenter.x,
+    targetCenter.y,
+  );
+  if (
+    refCenter === null ||
+    targetCenterValue === null
+  ) {
+    return null;
+  }
+
   const refValues: number[] = [];
   const targetValues: number[] = [];
+  let refCensus = 0;
+  let targetCensus = 0;
+  let censusBits = 0;
+  let gradientSimilaritySum = 0;
+  let gradientSamples = 0;
 
   for (const [dx, dy] of PATCH_OFFSETS) {
     const refX = params.centerPixelX + dx;
@@ -760,13 +824,53 @@ function patchZncc(params: {
       projected.x,
       projected.y,
     );
-
     if (a === null || b === null) continue;
+
     refValues.push(a);
     targetValues.push(b);
+
+    const refGradient = bilinear(
+      params.reference.gradient,
+      params.reference.image.width,
+      params.reference.image.height,
+      refX,
+      refY,
+    );
+    const targetGradient = bilinear(
+      params.target.gradient,
+      params.target.image.width,
+      params.target.image.height,
+      projected.x,
+      projected.y,
+    );
+    if (
+      refGradient !== null &&
+      targetGradient !== null
+    ) {
+      gradientSimilaritySum +=
+        1 -
+        Math.abs(refGradient - targetGradient) /
+          (refGradient + targetGradient + 18);
+      gradientSamples += 1;
+    }
+
+    if (
+      (dx !== 0 || dy !== 0) &&
+      censusBits < 31
+    ) {
+      if (a >= refCenter) {
+        refCensus |= 1 << censusBits;
+      }
+      if (b >= targetCenterValue) {
+        targetCensus |= 1 << censusBits;
+      }
+      censusBits += 1;
+    }
   }
 
-  if (refValues.length < 6) return null;
+  if (refValues.length < 6 || censusBits < 5) {
+    return null;
+  }
 
   let meanA = 0;
   let meanB = 0;
@@ -792,8 +896,36 @@ function patchZncc(params: {
   const denominator = Math.sqrt(
     varianceA * varianceB,
   );
-  if (denominator < 80) return null;
-  return clamp(covariance / denominator, -1, 1);
+  const zncc =
+    denominator > 36
+      ? clamp(covariance / denominator, -1, 1)
+      : 0;
+  const censusSimilarity =
+    1 -
+    censusHamming32(refCensus, targetCensus) /
+      Math.max(1, censusBits);
+  const gradientSimilarity =
+    gradientSamples > 0
+      ? clamp(
+          gradientSimilaritySum / gradientSamples,
+          0,
+          1,
+        )
+      : 0;
+
+  const textureEnergy = Math.sqrt(
+    varianceA / Math.max(1, refValues.length),
+  );
+  const robustScore =
+    Math.max(0, zncc) * 0.58 +
+    censusSimilarity * 0.27 +
+    gradientSimilarity * 0.15;
+
+  return clamp(
+    robustScore * (textureEnergy < 2.5 ? 0.78 : 1),
+    0,
+    1,
+  );
 }
 
 function scoreCandidate(params: {
@@ -804,39 +936,38 @@ function scoreCandidate(params: {
   pixelY: number;
   depthCm: number;
 }) {
-  const correlations: number[] = [];
+  const scores: number[] = [];
 
   const evaluate = (offsets: number[]) => {
     for (const targetView of neighborViews(
       params.referenceView,
       offsets,
     )) {
-      const correlation = patchZncc({
+      const score = robustPatchScore({
         referenceView: params.referenceView,
         targetView,
-        reference: params.views[params.referenceView],
+        reference:
+          params.views[params.referenceView],
         target: params.views[targetView],
         bodyHeightCm: params.bodyHeightCm,
         centerPixelX: params.pixelX,
         centerPixelY: params.pixelY,
         candidateDepthCm: params.depthCm,
       });
-      if (correlation !== null) {
-        correlations.push(correlation);
-      }
+      if (score !== null) scores.push(score);
     }
   };
 
   evaluate([-1, 1]);
-  if (correlations.length < 2) {
+  if (scores.length < 2) {
     evaluate([-2, 2]);
   }
 
-  if (correlations.length < 2) return null;
-  correlations.sort((a, b) => b - a);
-  const selected = correlations.slice(
+  if (scores.length < 2) return null;
+  scores.sort((a, b) => b - a);
+  const selected = scores.slice(
     0,
-    Math.min(3, correlations.length),
+    Math.min(3, scores.length),
   );
   return (
     selected.reduce((sum, value) => sum + value, 0) /

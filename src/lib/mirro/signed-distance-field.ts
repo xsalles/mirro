@@ -77,7 +77,7 @@ function edt3d(params: {
 }) {
   const { features, nx, ny, nz, step } = params;
   const total = nx * ny * nz;
-  let field = new Float64Array(total);
+  const field = new Float64Array(total);
 
   for (let index = 0; index < total; index += 1) {
     field[index] = features[index] ? 0 : INF;

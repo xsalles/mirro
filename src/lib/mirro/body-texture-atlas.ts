@@ -710,9 +710,33 @@ export async function buildBodyTextureAtlas(params: {
               )
             : 0;
 
-        guidance[offset] = clamp(Math.round(dominantR || r), 0, 255);
-        guidance[offset + 1] = clamp(Math.round(dominantG || g), 0, 255);
-        guidance[offset + 2] = clamp(Math.round(dominantB || b), 0, 255);
+        guidance[offset] = clamp(
+          Math.round(
+            dominantWeight > 0
+              ? dominantR
+              : r / Math.max(1e-5, lowWeight),
+          ),
+          0,
+          255,
+        );
+        guidance[offset + 1] = clamp(
+          Math.round(
+            dominantWeight > 0
+              ? dominantG
+              : g / Math.max(1e-5, lowWeight),
+          ),
+          0,
+          255,
+        );
+        guidance[offset + 2] = clamp(
+          Math.round(
+            dominantWeight > 0
+              ? dominantB
+              : b / Math.max(1e-5, lowWeight),
+          ),
+          0,
+          255,
+        );
         guidance[offset + 3] = output.data[offset + 3];
 
         const competition =

@@ -330,7 +330,10 @@ describe("calibrated perspective turntable MVS", () => {
       );
     }
 
-    expect(mvs.version).toBe(2);
+    expect(mvs.version).toBe(3);
+    expect(mvs.method).toBe(
+      "turntable-bundle-pyramid-simd-v3",
+    );
     expect(mvs.projectionModel).toBe(
       "calibrated-turntable-perspective",
     );
@@ -341,6 +344,12 @@ describe("calibrated perspective turntable MVS", () => {
       "coarse-to-fine-parabolic",
     );
     expect(mvs.turntableRig?.optimized).toBe(true);
+    expect(mvs.turntableRig?.version).toBe(2);
+    expect(mvs.turntableRig?.method).toBe(
+      "robust-axis-angle-tilt-bundle-v2",
+    );
+    expect(mvs.pyramidLevels).toBeGreaterThanOrEqual(2);
+    expect(mvs.highDensityDepthWidth).toBe(30);
     expect(
       Math.hypot(
         mvs.turntableRig?.axisCenterCm[0] ?? 99,

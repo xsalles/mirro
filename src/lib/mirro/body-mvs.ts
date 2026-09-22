@@ -9,6 +9,17 @@ import {
   censusHamming32,
   getCensusPopcountKernel,
 } from "./mvs-wasm-kernel";
+import {
+  dotProduct,
+  getMvsNumericBackend,
+  sumSquares,
+  weightedMean,
+} from "./mvs-simd-kernel";
+import {
+  rotateAroundAxis,
+  solveTurntableBundle,
+  type TurntableBundleView,
+} from "./turntable-bundle";
 import type {
   BodyDepthMap,
   BodyMultiViewStereo,
@@ -29,13 +40,29 @@ type TurntableCamera = {
   verticalOffsetCm: number;
 };
 
+type TurntablePose = {
+  angleRad: number;
+  axisOriginCm: [number, number, number];
+  axisDirection: [number, number, number];
+};
+
+type FeatureLevel = {
+  scale: number;
+  width: number;
+  height: number;
+  luminance: Float32Array;
+  gradient: Float32Array;
+};
+
 type MvsView = {
   image: RgbaImage;
   mask: Uint8Array;
   silhouette: BodySilhouette;
   luminance: Float32Array;
   gradient: Float32Array;
+  pyramid: FeatureLevel[];
   camera?: TurntableCamera;
+  pose?: TurntablePose;
 };
 
 const INVALID_DEPTH = -32768;
@@ -93,6 +120,92 @@ function buildGradientMagnitude(
   }
 
   return output;
+}
+
+function downsampleFloat(
+  input: Float32Array,
+  width: number,
+  height: number,
+) {
+  const nextWidth = Math.max(1, Math.floor(width / 2));
+  const nextHeight = Math.max(1, Math.floor(height / 2));
+  const output = new Float32Array(
+    nextWidth * nextHeight,
+  );
+
+  for (let y = 0; y < nextHeight; y += 1) {
+    for (let x = 0; x < nextWidth; x += 1) {
+      const sx = x * 2;
+      const sy = y * 2;
+      let sum = 0;
+      let count = 0;
+
+      for (let dy = 0; dy < 2; dy += 1) {
+        for (let dx = 0; dx < 2; dx += 1) {
+          const px = sx + dx;
+          const py = sy + dy;
+          if (px >= width || py >= height) continue;
+          sum += input[py * width + px];
+          count += 1;
+        }
+      }
+
+      output[y * nextWidth + x] =
+        count > 0 ? sum / count : 0;
+    }
+  }
+
+  return {
+    values: output,
+    width: nextWidth,
+    height: nextHeight,
+  };
+}
+
+function buildFeaturePyramid(
+  luminance: Float32Array,
+  width: number,
+  height: number,
+): FeatureLevel[] {
+  const levels: FeatureLevel[] = [];
+  let current = luminance;
+  let currentWidth = width;
+  let currentHeight = height;
+  let scale = 1;
+
+  for (let level = 0; level < 3; level += 1) {
+    levels.push({
+      scale,
+      width: currentWidth,
+      height: currentHeight,
+      luminance: current,
+      gradient: buildGradientMagnitude(
+        current,
+        currentWidth,
+        currentHeight,
+      ),
+    });
+
+    if (
+      level === 2 ||
+      currentWidth < 48 ||
+      currentHeight < 48
+    ) {
+      break;
+    }
+
+    const next = downsampleFloat(
+      current,
+      currentWidth,
+      currentHeight,
+    );
+    current = next.values;
+    currentWidth = next.width;
+    currentHeight = next.height;
+    scale *= 0.5;
+  }
+
+  return levels;
 }
 
 function median(values: number[]) {
@@ -177,6 +290,7 @@ function calibratedCameraForView(params: {
 
 type OptimizedTurntableRig = {
   cameras: Record<BodyViewId, TurntableCamera>;
+  poses?: Record<BodyViewId, TurntablePose>;
   metadata: NonNullable<
     BodyMultiViewStereo["turntableRig"]
   >;
@@ -281,6 +395,147 @@ function optimizeTurntableCameras(
   };
 }
 
+function optimizeTurntableBundleFromSilhouettes(params: {
+  candidates: Record<
+    BodyViewId,
+    TurntableCamera | undefined
+  >;
+  silhouettes: Record<BodyViewId, BodySilhouette>;
+  bodyHeightCm: number;
+}): OptimizedTurntableRig | undefined {
+  const initial = optimizeTurntableCameras(
+    params.candidates,
+  );
+  if (!initial) return undefined;
+
+  const resolved = params.candidates as Record<
+    BodyViewId,
+    TurntableCamera
+  >;
+  const sharedDistanceCm =
+    initial.metadata.sharedCameraDistanceCm ??
+    median(
+      BODY_VIEW_SEQUENCE.map(
+        (view) => resolved[view].distanceCm,
+      ),
+    );
+
+  const bundleViews: TurntableBundleView[] =
+    BODY_VIEW_SEQUENCE.map((view) => {
+      const camera = resolved[view];
+      const silhouette = params.silhouettes[view];
+      const samples = [
+        0.18, 0.3, 0.42, 0.5, 0.58, 0.7, 0.82,
+      ].map((vertical) => {
+        const row = rowGeometry(
+          silhouette,
+          params.bodyHeightCm,
+          vertical,
+        );
+        const pixelY =
+          silhouette.bounds.y +
+          vertical *
+            Math.max(
+              1,
+              silhouette.bounds.height - 1,
+            );
+        return {
+          bodyYcm:
+            params.bodyHeightCm / 2 -
+            vertical * params.bodyHeightCm,
+          observedHorizontalCm:
+            ((row.centerX -
+              camera.intrinsics.cx) *
+              sharedDistanceCm) /
+            Math.max(
+              1e-6,
+              camera.intrinsics.fx,
+            ),
+          observedVerticalCm:
+            (-(pixelY -
+              camera.intrinsics.cy) *
+              sharedDistanceCm) /
+            Math.max(
+              1e-6,
+              camera.intrinsics.fy,
+            ),
+        };
+      });
+
+      return {
+        view,
+        nominalAngleRad:
+          BODY_VIEW_ANGLE_RAD[view],
+        samples,
+      };
+    });
+
+  const solved = solveTurntableBundle({
+    views: bundleViews,
+    initialAxisCenterCm: [
+      initial.metadata.axisCenterCm[0],
+      initial.metadata.axisCenterCm[2],
+    ],
+    maxIterations: 7,
+  });
+
+  const cameras = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => [
+      view,
+      {
+        ...resolved[view],
+        distanceCm: sharedDistanceCm,
+        horizontalOffsetCm:
+          solved.opticalOffsetCm[0],
+        verticalOffsetCm:
+          solved.opticalOffsetCm[1],
+      },
+    ]),
+  ) as Record<BodyViewId, TurntableCamera>;
+
+  const poses = Object.fromEntries(
+    BODY_VIEW_SEQUENCE.map((view) => [
+      view,
+      {
+        angleRad:
+          BODY_VIEW_ANGLE_RAD[view] +
+          solved.angleOffsetsRad[view],
+        axisOriginCm: solved.axisOriginCm,
+        axisDirection: solved.axisDirection,
+      },
+    ]),
+  ) as Record<BodyViewId, TurntablePose>;
+
+  return {
+    cameras,
+    poses,
+    metadata: {
+      version: 2,
+      method: "robust-axis-angle-tilt-bundle-v2",
+      optimized: true,
+      axisCenterCm: solved.axisOriginCm,
+      sharedCameraDistanceCm: sharedDistanceCm,
+      verticalOpticalOffsetCm:
+        solved.opticalOffsetCm[1],
+      centerResidualCm:
+        initial.metadata.centerResidualCm,
+      axisDirection: solved.axisDirection,
+      axisTiltDeg: solved.axisTiltDeg,
+      perViewAngleOffsetDeg:
+        Object.fromEntries(
+          BODY_VIEW_SEQUENCE.map((view) => [
+            view,
+            (solved.angleOffsetsRad[view] *
+              180) /
+              Math.PI,
+          ]),
+        ),
+      bundleResidualCm: solved.residualCm,
+      bundleIterations: solved.iterations,
+    },
+  };
+}
+
 function rowGeometry(
   silhouette: BodySilhouette,
   bodyHeightCm: number,
@@ -364,23 +619,64 @@ function pixelToViewCoordinates(
   };
 }
 
-function viewCoordinatesToWorld(
+function nominalBodyToView(
   view: BodyViewId,
-  horizontalCm: number,
-  y: number,
-  depthCm: number,
+  point: Vec3,
 ): Vec3 {
   const angle = BODY_VIEW_ANGLE_RAD[view];
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   return [
-    horizontalCm * cos + depthCm * sin,
-    y,
-    -horizontalCm * sin + depthCm * cos,
+    point[0] * cos - point[2] * sin,
+    point[1],
+    point[0] * sin + point[2] * cos,
   ];
 }
 
-function worldDepth(
+function bodyToViewPoint(
+  view: BodyViewId,
+  point: Vec3,
+  pose?: TurntablePose,
+): Vec3 {
+  if (!pose) {
+    return nominalBodyToView(view, point);
+  }
+
+  return rotateAroundAxis(
+    point,
+    pose.axisOriginCm,
+    pose.axisDirection,
+    -pose.angleRad,
+  );
+}
+
+function viewCoordinatesToWorld(
+  view: BodyViewId,
+  horizontalCm: number,
+  y: number,
+  depthCm: number,
+  pose?: TurntablePose,
+): Vec3 {
+  if (!pose) {
+    const angle = BODY_VIEW_ANGLE_RAD[view];
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return [
+      horizontalCm * cos + depthCm * sin,
+      y,
+      -horizontalCm * sin + depthCm * cos,
+    ];
+  }
+
+  return rotateAroundAxis(
+    [horizontalCm, y, depthCm],
+    pose.axisOriginCm,
+    pose.axisDirection,
+    pose.angleRad,
+  );
+}
+
+function nominalWorldDepth(
   view: BodyViewId,
   x: number,
   z: number,
@@ -392,18 +688,6 @@ function worldDepth(
   );
 }
 
-function worldHorizontal(
-  view: BodyViewId,
-  x: number,
-  z: number,
-) {
-  const angle = BODY_VIEW_ANGLE_RAD[view];
-  return (
-    x * Math.cos(angle) -
-    z * Math.sin(angle)
-  );
-}
-
 function worldToPixel(
   viewId: BodyViewId,
   view: MvsView,
@@ -412,12 +696,14 @@ function worldToPixel(
   y: number,
   z: number,
 ) {
-  const depthCm = worldDepth(viewId, x, z);
-  const horizontalCm = worldHorizontal(
+  const viewPoint = bodyToViewPoint(
     viewId,
-    x,
-    z,
+    [x, y, z],
+    view.pose,
   );
+  const horizontalCm = viewPoint[0];
+  const viewY = viewPoint[1];
+  const depthCm = viewPoint[2];
 
   if (view.camera) {
     const { intrinsics, distanceCm } = view.camera;
@@ -440,7 +726,7 @@ function worldToPixel(
       y:
         intrinsics.cy -
         (intrinsics.fy *
-          (y - view.camera.verticalOffsetCm)) /
+          (viewY - view.camera.verticalOffsetCm)) /
           cameraDepth,
       depthCm,
     };
@@ -448,7 +734,7 @@ function worldToPixel(
 
   const silhouette = view.silhouette;
   const vertical = clamp(
-    (bodyHeightCm / 2 - y) /
+    (bodyHeightCm / 2 - viewY) /
       Math.max(1, bodyHeightCm),
     0,
     1,
@@ -537,7 +823,7 @@ function maxHullSurfaceDepth(
     for (let offset = 0; offset < vertices.length; offset += 3) {
       maximum = Math.max(
         maximum,
-        worldDepth(
+        nominalWorldDepth(
           view,
           vertices[offset],
           vertices[offset + 2],
@@ -555,17 +841,30 @@ function maxHullSurfaceDepth(
 function depthBounds(
   hull: BodyVisualHull,
   view: BodyViewId,
+  pose?: TurntablePose,
 ) {
   const minX = hull.originCm[0];
+  const minY = hull.originCm[1];
   const minZ = hull.originCm[2];
   const maxX = minX + hull.boundsCm.width;
+  const maxY = minY + hull.boundsCm.height;
   const maxZ = minZ + hull.boundsCm.depth;
-  const values = [
-    worldDepth(view, minX, minZ),
-    worldDepth(view, minX, maxZ),
-    worldDepth(view, maxX, minZ),
-    worldDepth(view, maxX, maxZ),
-  ];
+  const values: number[] = [];
+
+  for (const x of [minX, maxX]) {
+    for (const y of [minY, maxY]) {
+      for (const z of [minZ, maxZ]) {
+        values.push(
+          bodyToViewPoint(
+            view,
+            [x, y, z],
+            pose,
+          )[2],
+        );
+      }
+    }
+  }
+
   return {
     min: Math.min(...values),
     max: Math.max(...values),
@@ -583,7 +882,11 @@ function frontHullDepth(params: {
   const sdf = params.hull.signedDistanceField;
   if (!sdf) return null;
 
-  const bounds = depthBounds(params.hull, params.viewId);
+  const bounds = depthBounds(
+    params.hull,
+    params.viewId,
+    params.reference.pose,
+  );
   const step = Math.max(
     0.55,
     Math.min(
@@ -615,6 +918,7 @@ function frontHullDepth(params: {
       coordinate.horizontalCm,
       coordinate.y,
       depth,
+      params.reference.pose,
     );
     const distance = sampleSignedDistance(
       sdf,
@@ -642,6 +946,7 @@ function frontHullDepth(params: {
           coordinate.horizontalCm,
           coordinate.y,
           mid,
+          params.reference.pose,
         );
         const midDistance = sampleSignedDistance(
           sdf,
@@ -703,7 +1008,24 @@ function robustPatchScore(params: {
   centerPixelX: number;
   centerPixelY: number;
   candidateDepthCm: number;
+  pyramidLevel?: number;
 }) {
+  const referenceLevel =
+    params.reference.pyramid[
+      Math.min(
+        params.pyramidLevel ?? 0,
+        params.reference.pyramid.length - 1,
+      )
+    ];
+  const targetLevel =
+    params.target.pyramid[
+      Math.min(
+        params.pyramidLevel ?? 0,
+        params.target.pyramid.length - 1,
+      )
+    ];
+  const offsetScale =
+    1 / Math.max(1e-6, referenceLevel.scale);
   const referenceCenterCoordinate =
     pixelToViewCoordinates(
       params.reference,
@@ -717,6 +1039,7 @@ function robustPatchScore(params: {
     referenceCenterCoordinate.horizontalCm,
     referenceCenterCoordinate.y,
     params.candidateDepthCm,
+    params.reference.pose,
   );
   const targetCenter = worldToPixel(
     params.targetView,
@@ -743,18 +1066,18 @@ function robustPatchScore(params: {
   }
 
   const refCenter = bilinear(
-    params.reference.luminance,
-    params.reference.image.width,
-    params.reference.image.height,
-    params.centerPixelX,
-    params.centerPixelY,
+    referenceLevel.luminance,
+    referenceLevel.width,
+    referenceLevel.height,
+    params.centerPixelX * referenceLevel.scale,
+    params.centerPixelY * referenceLevel.scale,
   );
   const targetCenterValue = bilinear(
-    params.target.luminance,
-    params.target.image.width,
-    params.target.image.height,
-    targetCenter.x,
-    targetCenter.y,
+    targetLevel.luminance,
+    targetLevel.width,
+    targetLevel.height,
+    targetCenter.x * targetLevel.scale,
+    targetCenter.y * targetLevel.scale,
   );
   if (
     refCenter === null ||
@@ -772,8 +1095,10 @@ function robustPatchScore(params: {
   let gradientSamples = 0;
 
   for (const [dx, dy] of PATCH_OFFSETS) {
-    const refX = params.centerPixelX + dx;
-    const refY = params.centerPixelY + dy;
+    const refX =
+      params.centerPixelX + dx * offsetScale;
+    const refY =
+      params.centerPixelY + dy * offsetScale;
     if (!maskContains(params.reference, refX, refY)) {
       continue;
     }
@@ -790,6 +1115,7 @@ function robustPatchScore(params: {
       refCoordinate.horizontalCm,
       refCoordinate.y,
       params.candidateDepthCm,
+      params.reference.pose,
     );
     const projected = worldToPixel(
       params.targetView,
@@ -811,18 +1137,18 @@ function robustPatchScore(params: {
     }
 
     const a = bilinear(
-      params.reference.luminance,
-      params.reference.image.width,
-      params.reference.image.height,
-      refX,
-      refY,
+      referenceLevel.luminance,
+      referenceLevel.width,
+      referenceLevel.height,
+      refX * referenceLevel.scale,
+      refY * referenceLevel.scale,
     );
     const b = bilinear(
-      params.target.luminance,
-      params.target.image.width,
-      params.target.image.height,
-      projected.x,
-      projected.y,
+      targetLevel.luminance,
+      targetLevel.width,
+      targetLevel.height,
+      projected.x * targetLevel.scale,
+      projected.y * targetLevel.scale,
     );
     if (a === null || b === null) continue;
 
@@ -830,18 +1156,18 @@ function robustPatchScore(params: {
     targetValues.push(b);
 
     const refGradient = bilinear(
-      params.reference.gradient,
-      params.reference.image.width,
-      params.reference.image.height,
-      refX,
-      refY,
+      referenceLevel.gradient,
+      referenceLevel.width,
+      referenceLevel.height,
+      refX * referenceLevel.scale,
+      refY * referenceLevel.scale,
     );
     const targetGradient = bilinear(
-      params.target.gradient,
-      params.target.image.width,
-      params.target.image.height,
-      projected.x,
-      projected.y,
+      targetLevel.gradient,
+      targetLevel.width,
+      targetLevel.height,
+      projected.x * targetLevel.scale,
+      projected.y * targetLevel.scale,
     );
     if (
       refGradient !== null &&
@@ -881,17 +1207,20 @@ function robustPatchScore(params: {
   meanA /= refValues.length;
   meanB /= targetValues.length;
 
-  let covariance = 0;
-  let varianceA = 0;
-  let varianceB = 0;
-
-  for (let index = 0; index < refValues.length; index += 1) {
-    const da = refValues[index] - meanA;
-    const db = targetValues[index] - meanB;
-    covariance += da * db;
-    varianceA += da * da;
-    varianceB += db * db;
-  }
+  const sampleCount = refValues.length;
+  const covariance =
+    dotProduct(refValues, targetValues) -
+    sampleCount * meanA * meanB;
+  const varianceA = Math.max(
+    0,
+    sumSquares(refValues) -
+      sampleCount * meanA * meanA,
+  );
+  const varianceB = Math.max(
+    0,
+    sumSquares(targetValues) -
+      sampleCount * meanB * meanB,
+  );
 
   const denominator = Math.sqrt(
     varianceA * varianceB,
@@ -935,6 +1264,7 @@ function scoreCandidate(params: {
   pixelX: number;
   pixelY: number;
   depthCm: number;
+  pyramidLevel?: number;
 }) {
   const scores: number[] = [];
 
@@ -953,6 +1283,7 @@ function scoreCandidate(params: {
         centerPixelX: params.pixelX,
         centerPixelY: params.pixelY,
         candidateDepthCm: params.depthCm,
+        pyramidLevel: params.pyramidLevel,
       });
       if (score !== null) scores.push(score);
     }
@@ -1025,16 +1356,21 @@ function createRawDepthMap(params: {
   views: Record<BodyViewId, MvsView>;
   hull: BodyVisualHull;
   bodyHeightCm: number;
+  targetWidth?: number;
 }): BodyDepthMap {
   const reference = params.views[params.view];
-  const width = 30;
+  const width = clamp(
+    Math.round(params.targetWidth ?? 30),
+    28,
+    48,
+  );
   const aspect =
     reference.silhouette.bounds.height /
     Math.max(1, reference.silhouette.bounds.width);
   const height = clamp(
     Math.round(width * aspect),
-    54,
-    80,
+    Math.round(width * 1.8),
+    Math.round(width * 2.7),
   );
   const depthValues = new Int16Array(width * height);
   depthValues.fill(INVALID_DEPTH);
@@ -1099,6 +1435,7 @@ function createRawDepthMap(params: {
           coordinate.horizontalCm,
           coordinate.y,
           candidateDepth,
+          reference.pose,
         );
         const sdf = params.hull.signedDistanceField;
         if (
@@ -1120,6 +1457,7 @@ function createRawDepthMap(params: {
           pixelX,
           pixelY,
           depthCm: candidateDepth,
+          pyramidLevel: 2,
         });
       };
 
@@ -1150,7 +1488,42 @@ function createRawDepthMap(params: {
       ];
 
       for (const depth of fineDepths) {
-        const score = evaluateDepth(depth);
+        const coordinate = pixelToViewCoordinates(
+          reference,
+          params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          depth,
+        );
+        const world = viewCoordinatesToWorld(
+          params.view,
+          coordinate.horizontalCm,
+          coordinate.y,
+          depth,
+          reference.pose,
+        );
+        const sdf = params.hull.signedDistanceField;
+        if (
+          sdf &&
+          sampleSignedDistance(
+            sdf,
+            world[0],
+            world[1],
+            world[2],
+          ) > 0.3
+        ) {
+          continue;
+        }
+
+        const score = scoreCandidate({
+          referenceView: params.view,
+          views: params.views,
+          bodyHeightCm: params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          depthCm: depth,
+          pyramidLevel: 1,
+        });
         if (score !== null && score > bestScore) {
           bestDepth = depth;
           bestScore = score;
@@ -1158,10 +1531,29 @@ function createRawDepthMap(params: {
       }
 
       const subpixelStepCm = 0.16;
-      const minusScore = evaluateDepth(
+      const evaluateFullResolution = (
+        candidateDepth: number,
+      ) =>
+        scoreCandidate({
+          referenceView: params.view,
+          views: params.views,
+          bodyHeightCm: params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          depthCm: candidateDepth,
+          pyramidLevel: 0,
+        });
+
+      const centerFineScore =
+        evaluateFullResolution(bestDepth);
+      if (centerFineScore !== null) {
+        bestScore = centerFineScore;
+      }
+
+      const minusScore = evaluateFullResolution(
         bestDepth - subpixelStepCm,
       );
-      const plusScore = evaluateDepth(
+      const plusScore = evaluateFullResolution(
         bestDepth + subpixelStepCm,
       );
 
@@ -1179,7 +1571,8 @@ function createRawDepthMap(params: {
 
         if (Math.abs(correction) > 0) {
           const refinedDepth = bestDepth + correction;
-          const refinedScore = evaluateDepth(refinedDepth);
+          const refinedScore =
+            evaluateFullResolution(refinedDepth);
 
           if (
             refinedScore !== null &&
@@ -1444,6 +1837,7 @@ function enforceCrossViewConsistency(params: {
           coordinate.horizontalCm,
           coordinate.y,
           depth,
+          reference.pose,
         );
 
         let comparable = 0;
@@ -1598,6 +1992,9 @@ function buildTsdf(params: {
   const maxQuantized = Math.floor(
     truncationCm / quantizationCm,
   );
+  const contributions = new Array<number>(8).fill(0);
+  const contributionWeights =
+    new Array<number>(8).fill(0);
 
   for (let gy = 0; gy < resolution.y; gy += 1) {
     const y = originCm[1] + gy * stepCm[1];
@@ -1636,8 +2033,7 @@ function buildTsdf(params: {
           continue;
         }
 
-        let sum = 0;
-        let weightSum = 0;
+        let contributionCount = 0;
 
         const radialAngle = Math.atan2(x, z);
         for (const viewId of BODY_VIEW_SEQUENCE) {
@@ -1645,7 +2041,8 @@ function buildTsdf(params: {
             Math.atan2(
               Math.sin(
                 radialAngle -
-                  BODY_VIEW_ANGLE_RAD[viewId],
+                  (params.views[viewId].pose?.angleRad ??
+                    BODY_VIEW_ANGLE_RAD[viewId]),
               ),
               Math.cos(
                 radialAngle -
@@ -1680,13 +2077,22 @@ function buildTsdf(params: {
           const weight =
             sample.confidence *
             sample.confidence;
-          sum += contribution * weight;
-          weightSum += weight;
+          contributions[contributionCount] =
+            contribution;
+          contributionWeights[contributionCount] =
+            weight;
+          contributionCount += 1;
         }
 
+        const reduced = weightedMean(
+          contributions,
+          contributionWeights,
+          contributionCount,
+        );
+        const weightSum = reduced.weightSum;
         const fused =
           weightSum >= 0.24
-            ? sum / weightSum
+            ? reduced.value
             : hullDistance;
         const conservative = Math.max(
           hullDistance,
@@ -2032,6 +2438,7 @@ export type BodyMvsBuildInput = {
   bodyHeightCm: number;
   optics?: OpticalCalibrationProfile;
   diagnostics?: MultiViewStereoDiagnostics;
+  targetDepthWidth?: number;
 };
 
 export function buildClassicalMultiViewStereo(
@@ -2077,15 +2484,25 @@ export function buildClassicalMultiViewStereo(
     (view) => Boolean(cameraCandidates[view]),
   );
   const optimizedRig = usePerspective
-    ? optimizeTurntableCameras(cameraCandidates)
+    ? optimizeTurntableBundleFromSilhouettes({
+        candidates: cameraCandidates,
+        silhouettes: params.silhouettes,
+        bodyHeightCm: params.bodyHeightCm,
+      })
     : undefined;
   const activeCameras =
     optimizedRig?.cameras ?? cameraCandidates;
+  const activePoses = optimizedRig?.poses;
 
   const views = Object.fromEntries(
     BODY_VIEW_SEQUENCE.map((view) => {
       const image = params.images[view];
       const luminance = buildLuminance(image);
+      const pyramid = buildFeaturePyramid(
+        luminance,
+        image.width,
+        image.height,
+      );
       return [
         view,
         {
@@ -2093,13 +2510,13 @@ export function buildClassicalMultiViewStereo(
           mask: params.masks[view],
           silhouette: params.silhouettes[view],
           luminance,
-          gradient: buildGradientMagnitude(
-            luminance,
-            image.width,
-            image.height,
-          ),
+          gradient: pyramid[0].gradient,
+          pyramid,
           camera: usePerspective
             ? activeCameras[view]
+            : undefined,
+          pose: usePerspective
+            ? activePoses?.[view]
             : undefined,
         },
       ];
@@ -2114,6 +2531,7 @@ export function buildClassicalMultiViewStereo(
         views,
         hull: params.hull,
         bodyHeightCm: params.bodyHeightCm,
+        targetWidth: params.targetDepthWidth,
       }),
     ]),
   ) as Record<BodyViewId, BodyDepthMap>;
@@ -2196,10 +2614,16 @@ export function buildClassicalMultiViewStereo(
 
   const matchingKernel =
     getCensusPopcountKernel().backend;
+  const numericKernel = getMvsNumericBackend();
+  const isV10 =
+    optimizedRig?.metadata.version === 2 &&
+    views.front.pyramid.length >= 2;
 
   return {
-    version: 2,
-    method: "turntable-robust-subpixel-tsdf-v2",
+    version: isV10 ? 3 : 2,
+    method: isV10
+      ? "turntable-bundle-pyramid-simd-v3"
+      : "turntable-robust-subpixel-tsdf-v2",
     projectionModel: usePerspective
       ? "calibrated-turntable-perspective"
       : "metric-orthographic",
@@ -2215,11 +2639,17 @@ export function buildClassicalMultiViewStereo(
     matchingModel: "zncc-census-gradient",
     depthRefinement: "coarse-to-fine-parabolic",
     matchingKernel,
+    numericKernel,
     executionBackend:
-      matchingKernel === "wasm-popcnt32-v1"
-        ? "main-wasm"
-        : "main-js",
+      numericKernel === "wasm-simd-v1"
+        ? "main-wasm-simd"
+        : matchingKernel === "wasm-popcnt32-v1"
+          ? "main-wasm"
+          : "main-js",
     subpixelRefinedCount,
+    pyramidLevels: views.front.pyramid.length,
+    highDensityDepthWidth:
+      params.targetDepthWidth ?? 30,
     turntableRig:
       optimizedRig?.metadata ?? {
         version: 1,

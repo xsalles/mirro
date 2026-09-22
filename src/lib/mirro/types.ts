@@ -211,10 +211,11 @@ export type BodyTsdfVolume = {
 };
 
 export type BodyMultiViewStereo = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   method:
     | "turntable-zncc-tsdf-v1"
-    | "turntable-robust-subpixel-tsdf-v2";
+    | "turntable-robust-subpixel-tsdf-v2"
+    | "turntable-bundle-pyramid-simd-v3";
   projectionModel:
     | "metric-orthographic"
     | "calibrated-turntable-perspective";
@@ -228,21 +229,37 @@ export type BodyMultiViewStereo = {
   matchingKernel?:
     | "js-popcnt"
     | "wasm-popcnt32-v1";
+  numericKernel?:
+    | "js-scalar"
+    | "wasm-simd-v1";
   executionBackend?:
     | "main-js"
     | "main-wasm"
+    | "main-wasm-simd"
     | "worker-js"
-    | "worker-wasm";
+    | "worker-wasm"
+    | "worker-wasm-simd";
   subpixelRefinedCount?: number;
   turntableRig?: {
-    version: 1;
-    method: "shared-axis-center-least-squares-v1";
+    version: 1 | 2;
+    method:
+      | "shared-axis-center-least-squares-v1"
+      | "robust-axis-angle-tilt-bundle-v2";
     optimized: boolean;
     axisCenterCm: [number, number, number];
     sharedCameraDistanceCm?: number;
     verticalOpticalOffsetCm?: number;
     centerResidualCm: number;
+    axisDirection?: [number, number, number];
+    axisTiltDeg?: number;
+    perViewAngleOffsetDeg?: Partial<
+      Record<BodyViewId, number>
+    >;
+    bundleResidualCm?: number;
+    bundleIterations?: number;
   };
+  pyramidLevels?: number;
+  highDensityDepthWidth?: number;
   depthMaps: Record<BodyViewId, BodyDepthMap>;
   tsdf: BodyTsdfVolume;
   surfaceVertices: number[];
@@ -375,7 +392,7 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
@@ -385,7 +402,8 @@ export type BodyCalibration = {
     | "visual-hull-multiband-v6"
     | "eight-view-sdf-gradient-seams-v7"
     | "turntable-zncc-tsdf-mvs-v8"
-    | "robust-subpixel-worker-mvs-v9";
+    | "robust-subpixel-worker-mvs-v9"
+    | "bundle-pyramid-simd-mvs-v10";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   denseSilhouettes?: Partial<Record<BodyViewId, BodySilhouette>>;

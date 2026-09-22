@@ -492,35 +492,42 @@ export async function calibrateBodyFromPhotos(
   const hasRobustMvs = Boolean(
     visualHull?.multiViewStereo?.version === 2,
   );
+  const hasBundlePyramidMvs = Boolean(
+    visualHull?.multiViewStereo?.version === 3,
+  );
   const hasBodyLens = cameraRig?.version === 2;
   const version: BodyCalibration["version"] =
-    hasRobustMvs
-      ? 9
-      : hasMultiViewStereo
-        ? 8
-        : hasEightViewSdf
-          ? 7
-          : hasVisualHull
-            ? 6
-            : hasBodyLens
-              ? 5
-              : cameraRig
-                ? 4
-                : base.version;
+    hasBundlePyramidMvs
+      ? 10
+      : hasRobustMvs
+        ? 9
+        : hasMultiViewStereo
+          ? 8
+          : hasEightViewSdf
+            ? 7
+            : hasVisualHull
+              ? 6
+              : hasBodyLens
+                ? 5
+                : cameraRig
+                  ? 4
+                  : base.version;
   const method: BodyCalibration["method"] =
-    hasRobustMvs
-      ? "robust-subpixel-worker-mvs-v9"
-      : hasMultiViewStereo
-        ? "turntable-zncc-tsdf-mvs-v8"
-        : hasEightViewSdf
-          ? "eight-view-sdf-gradient-seams-v7"
-          : hasVisualHull
-            ? "visual-hull-multiband-v6"
-            : hasBodyLens
-              ? "lens-undistorted-local-color-surface-v5"
-              : cameraRig
-                ? "pinhole-bundle-anatomical-v4"
-                : base.method;
+    hasBundlePyramidMvs
+      ? "bundle-pyramid-simd-mvs-v10"
+      : hasRobustMvs
+        ? "robust-subpixel-worker-mvs-v9"
+        : hasMultiViewStereo
+          ? "turntable-zncc-tsdf-mvs-v8"
+          : hasEightViewSdf
+            ? "eight-view-sdf-gradient-seams-v7"
+            : hasVisualHull
+              ? "visual-hull-multiband-v6"
+              : hasBodyLens
+                ? "lens-undistorted-local-color-surface-v5"
+                : cameraRig
+                  ? "pinhole-bundle-anatomical-v4"
+                  : base.method;
 
   const opticalScore = optics
     ? optics.conditionScore * 0.04

@@ -148,8 +148,10 @@ export function sumSquares(values: number[]) {
 export function weightedMean(
   values: number[],
   weights: number[],
+  requestedLength?: number,
 ) {
   const length = Math.min(
+    requestedLength ?? values.length,
     values.length,
     weights.length,
   );

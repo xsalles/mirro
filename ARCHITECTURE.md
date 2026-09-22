@@ -37,7 +37,7 @@ After the v4 shared-pinhole solve, MIRRO now estimates Brown–Conrady radial/ta
 
 MIRRO now also has a dedicated optical workflow. Six to twelve target photos at varied tilts/positions solve shared intrinsics and Brown–Conrady distortion independently from the body session. Only the derived optical profile is persisted; calibration photos are not stored. Body capture can reuse this lens profile and therefore does not require the target to be present in all four body photos.
 
-Dense reconstruction uses a different capture contract: the phone remains fixed while the person turns in place through 0°/90°/180°/270°. Moving the target between body views does not create a shared world frame and must not be treated as multi-view camera registration.
+Dense reconstruction uses a different capture contract: the phone remains fixed while the person turns in place through eight 45° stops from 0° through 315°. Moving the target between body views does not create a shared world frame and must not be treated as multi-view camera registration.
 
 ## Garment image + calibration pipeline — implemented
 
@@ -148,7 +148,7 @@ The renderer materially improves realism, but exact visual fit still depends on 
 
 ## Surface reconstruction v7 → v8
 
-The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 introduced four-mask carving. V7 expands capture to eight views at 45° intervals; each diagonal silhouette adds another projection half-space and cuts away the oversized diagonal corners left by four orthogonal views. A voxel survives only when its orthogonal projection is inside all four body masks. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
+The v5 asymmetric parametric body remains as a robust base and garment-construction reference. V6 introduced four-mask carving. V7 expands capture to eight views at 45° intervals; each diagonal silhouette adds another projection half-space and cuts away the oversized diagonal corners left by four orthogonal views. A voxel survives only when its projection is inside every available body mask used by the eight-view carving stage. The boundary is extracted with marching tetrahedra, deduplicated along voxel edges, smoothed with bounded Taubin passes and given recomputed normals.
 
 The visual hull is used by the PBR body renderer and persisted together with RLE-compressed voxel occupancy. V7 also computes an exact separable 3D Euclidean distance transform for both inside and outside voxels, quantizes the signed field at 0.05 cm, and persists it for smooth cloth collision. The anatomical BodyMesh remains available for semantic landmarks, garment initialization and fallback.
 

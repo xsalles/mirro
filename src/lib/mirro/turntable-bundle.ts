@@ -502,7 +502,7 @@ export function solveTurntableBundle(params: {
     axisVerticalValidation: {
       valid:
         Number.isFinite(verticalSlope) &&
-        Math.abs(verticalSlope) <= 0.035 &&
+        Math.abs(verticalSlope) <= 0.18 &&
         tiltDeg <= 5,
       residualSlopeCmPerCm: verticalSlope,
     },

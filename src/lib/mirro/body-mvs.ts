@@ -2037,7 +2037,8 @@ function buildTsdf(params: {
             Math.atan2(
               Math.sin(
                 radialAngle -
-                  BODY_VIEW_ANGLE_RAD[viewId],
+                  (params.views[viewId].pose?.angleRad ??
+                    BODY_VIEW_ANGLE_RAD[viewId]),
               ),
               Math.cos(
                 radialAngle -

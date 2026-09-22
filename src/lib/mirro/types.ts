@@ -27,6 +27,14 @@ export type CameraIntrinsics = {
   skew: number;
 };
 
+export type LensDistortion = {
+  k1: number;
+  k2: number;
+  k3: number;
+  p1: number;
+  p2: number;
+};
+
 export type CameraExtrinsics = {
   rotation: [
     number, number, number,
@@ -66,9 +74,12 @@ export type BodyViewCalibration = {
 };
 
 export type BodyCameraRig = {
-  version: 1;
-  method: "shared-pinhole-bundle-v1";
+  version: 1 | 2;
+  method:
+    | "shared-pinhole-bundle-v1"
+    | "brown-conrady-bundle-v2";
   intrinsics: CameraIntrinsics;
+  distortion?: LensDistortion;
   views: Record<BodySide, CameraExtrinsics & {
     reprojectionErrorPx: number;
     homography: [
@@ -81,13 +92,21 @@ export type BodyCameraRig = {
   iterations: number;
   conditionScore: number;
   warnings: string[];
+  distortionRmsImprovementPx?: number;
 };
 
 export type BodyTextureCalibration = {
-  version: 1;
-  method: "log-luminance-rgb-gain-v1";
+  version: 1 | 2;
+  method:
+    | "log-luminance-rgb-gain-v1"
+    | "local-grid-rgb-transfer-v2";
   gains: Record<BodySide, [number, number, number]>;
   meanLuminance: Record<BodySide, number>;
+  grid?: {
+    columns: number;
+    rows: number;
+    gains: Record<BodySide, Array<[number, number, number]>>;
+  };
   score: number;
 };
 
@@ -101,6 +120,7 @@ export type BodySilhouette = {
     height: number;
   };
   widthProfile: number[];
+  centerProfile?: number[];
   foregroundRatio: number;
   backgroundThreshold: number;
   confidence: number;
@@ -153,10 +173,11 @@ export type BodyCollisionPrimitive =
       bottomY: number;
       radiusX: number[];
       radiusZ: number[];
+      centerZ?: number[];
     };
 
 export type BodyMesh = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   coordinateSystem: "x-right-y-up-z-front-centimeters";
   ringCount: number;
   segmentsPerRing: number;
@@ -177,6 +198,7 @@ export type BodyMesh = {
   };
   radiusXProfile?: number[];
   radiusZProfile?: number[];
+  centerZProfile?: number[];
   torsoTopRing?: number;
   torsoBottomRing?: number;
   parts?: BodyPartMesh[];
@@ -184,12 +206,13 @@ export type BodyMesh = {
 };
 
 export type BodyCalibration = {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5;
   method:
     | "weak-perspective-elliptical-hull-v1"
     | "weak-perspective-anatomical-primitives-v2"
     | "metric-target-anatomical-v3"
-    | "pinhole-bundle-anatomical-v4";
+    | "pinhole-bundle-anatomical-v4"
+    | "lens-undistorted-local-color-surface-v5";
   sampleCount: number;
   silhouettes: Record<BodySide, BodySilhouette>;
   mesh: BodyMesh;

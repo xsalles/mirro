@@ -107,23 +107,53 @@ function bodyUvs(
       Math.max(0, (halfHeight - y) / Math.max(1, mesh.boundsCm.height)),
     );
 
-    let horizontal = 0.5;
-    if (side === "front") {
-      horizontal = 0.5 - x / Math.max(1, mesh.boundsCm.width);
-    } else if (side === "back") {
-      horizontal = 0.5 + x / Math.max(1, mesh.boundsCm.width);
-    } else if (side === "right") {
-      horizontal = 0.5 + z / Math.max(1, mesh.boundsCm.depth);
-    } else {
-      horizontal = 0.5 - z / Math.max(1, mesh.boundsCm.depth);
-    }
-    horizontal = Math.min(1, Math.max(0, horizontal));
+    const profile = silhouette?.widthProfile;
+    const profilePosition = vertical * Math.max(0, (profile?.length ?? 1) - 1);
+    const profileLow = Math.floor(profilePosition);
+    const profileHigh = Math.min(
+      Math.max(0, (profile?.length ?? 1) - 1),
+      profileLow + 1,
+    );
+    const profileMix = profilePosition - profileLow;
+    const normalizedRowWidth = profile
+      ? (profile[profileLow] ?? 0) +
+        ((profile[profileHigh] ?? profile[profileLow] ?? 0) -
+          (profile[profileLow] ?? 0)) *
+          profileMix
+      : 1;
+    const rowPhysicalWidth =
+      silhouette?.metricWidthProfileCm
+        ? (silhouette.metricWidthProfileCm[profileLow] ?? mesh.boundsCm.width)
+        : Math.max(1, normalizedRowWidth * mesh.boundsCm.height);
+    const horizontalCoordinate =
+      side === "front"
+        ? -x
+        : side === "back"
+          ? x
+          : side === "right"
+            ? z
+            : -z;
+    const horizontal = Math.min(
+      1,
+      Math.max(
+        0,
+        0.5 + horizontalCoordinate / Math.max(1, rowPhysicalWidth),
+      ),
+    );
 
     if (silhouette) {
+      const rowWidthPixels = Math.max(
+        1,
+        normalizedRowWidth * silhouette.bounds.height,
+      );
+      const centerX = silhouette.bounds.x + silhouette.bounds.width / 2;
+      const sourceX =
+        centerX + (horizontal - 0.5) * rowWidthPixels;
       uv[vertex * 2] =
-        (silhouette.bounds.x +
-          horizontal * Math.max(1, silhouette.bounds.width - 1)) /
-        silhouette.sourceWidth;
+        Math.min(
+          silhouette.sourceWidth - 1,
+          Math.max(0, sourceX),
+        ) / silhouette.sourceWidth;
       uv[vertex * 2 + 1] =
         (silhouette.bounds.y +
           vertical * Math.max(1, silhouette.bounds.height - 1)) /

@@ -425,7 +425,9 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica v2 e os colisores separados.
+                {calibration.version === 3
+                  ? "Alvo métrico reconhecido nas quatro vistas; BodyMesh v3 em escala métrica ativado."
+                  : "As quatro vistas estão coerentes o suficiente para gerar a anatomia paramétrica v2 e os colisores separados."}
               </p>
             )}
           </div>

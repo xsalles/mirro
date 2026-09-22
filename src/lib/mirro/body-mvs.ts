@@ -393,14 +393,16 @@ function depthBounds(
 
 function frontHullDepth(params: {
   hull: BodyVisualHull;
-  view: BodyViewId;
-  horizontalCm: number;
-  y: number;
+  viewId: BodyViewId;
+  reference: MvsView;
+  bodyHeightCm: number;
+  pixelX: number;
+  pixelY: number;
 }) {
   const sdf = params.hull.signedDistanceField;
   if (!sdf) return null;
 
-  const bounds = depthBounds(params.hull, params.view);
+  const bounds = depthBounds(params.hull, params.viewId);
   const step = Math.max(
     0.4,
     Math.min(
@@ -420,10 +422,17 @@ function frontHullDepth(params: {
     depth >= bounds.min;
     depth -= step
   ) {
+    const coordinate = pixelToViewCoordinates(
+      params.reference,
+      params.bodyHeightCm,
+      params.pixelX,
+      params.pixelY,
+      depth,
+    );
     const [x, y, z] = viewCoordinatesToWorld(
-      params.view,
-      params.horizontalCm,
-      params.y,
+      params.viewId,
+      coordinate.horizontalCm,
+      coordinate.y,
       depth,
     );
     const distance = sampleSignedDistance(
@@ -440,10 +449,17 @@ function frontHullDepth(params: {
 
       for (let iteration = 0; iteration < 5; iteration += 1) {
         const mid = (outside + inside) / 2;
+        const coordinate = pixelToViewCoordinates(
+          params.reference,
+          params.bodyHeightCm,
+          params.pixelX,
+          params.pixelY,
+          mid,
+        );
         const point = viewCoordinatesToWorld(
-          params.view,
-          params.horizontalCm,
-          params.y,
+          params.viewId,
+          coordinate.horizontalCm,
+          coordinate.y,
           mid,
         );
         const midDistance = sampleSignedDistance(
@@ -515,10 +531,11 @@ function patchZncc(params: {
     }
 
     const refCoordinate = pixelToViewCoordinates(
-      params.reference.silhouette,
+      params.reference,
       params.bodyHeightCm,
       refX,
       refY,
+      params.candidateDepthCm,
     );
     const world = viewCoordinatesToWorld(
       params.referenceView,
@@ -528,7 +545,7 @@ function patchZncc(params: {
     );
     const projected = worldToPixel(
       params.targetView,
-      params.target.silhouette,
+      params.target,
       params.bodyHeightCm,
       world[0],
       world[1],
@@ -701,17 +718,13 @@ function createRawDepthMap(params: {
         continue;
       }
 
-      const coordinate = pixelToViewCoordinates(
-        reference.silhouette,
-        params.bodyHeightCm,
-        pixelX,
-        pixelY,
-      );
       const hullDepth = frontHullDepth({
         hull: params.hull,
-        view: params.view,
-        horizontalCm: coordinate.horizontalCm,
-        y: coordinate.y,
+        viewId: params.view,
+        reference,
+        bodyHeightCm: params.bodyHeightCm,
+        pixelX,
+        pixelY,
       });
       if (hullDepth === null) continue;
 
@@ -721,6 +734,13 @@ function createRawDepthMap(params: {
 
       for (const inward of inwardOffsets) {
         const candidateDepth = hullDepth - inward;
+        const coordinate = pixelToViewCoordinates(
+          reference,
+          params.bodyHeightCm,
+          pixelX,
+          pixelY,
+          candidateDepth,
+        );
         const world = viewCoordinatesToWorld(
           params.view,
           coordinate.horizontalCm,
@@ -990,10 +1010,11 @@ function enforceCrossViewConsistency(params: {
           ((gx + 0.5) / map.width) *
             reference.silhouette.bounds.width;
         const coordinate = pixelToViewCoordinates(
-          reference.silhouette,
+          reference,
           params.bodyHeightCm,
           pixelX,
           pixelY,
+          depth,
         );
         const world = viewCoordinatesToWorld(
           view,
@@ -1009,7 +1030,7 @@ function enforceCrossViewConsistency(params: {
           const target = params.views[targetView];
           const projected = worldToPixel(
             targetView,
-            target.silhouette,
+            target,
             params.bodyHeightCm,
             world[0],
             world[1],
@@ -1095,7 +1116,7 @@ function tsdfSampleFromMap(params: {
 }) {
   const projected = worldToPixel(
     params.viewId,
-    params.view.silhouette,
+    params.view,
     params.bodyHeightCm,
     params.x,
     params.y,

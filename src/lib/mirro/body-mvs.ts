@@ -2003,7 +2003,7 @@ export type MultiViewStereoDiagnostics = {
     | "insufficient-surface";
 };
 
-export function buildClassicalMultiViewStereo(params: {
+export type BodyMvsBuildInput = {
   hull: BodyVisualHull;
   images: Record<BodyViewId, RgbaImage>;
   masks: Record<BodyViewId, Uint8Array>;
@@ -2011,7 +2011,11 @@ export function buildClassicalMultiViewStereo(params: {
   bodyHeightCm: number;
   optics?: OpticalCalibrationProfile;
   diagnostics?: MultiViewStereoDiagnostics;
-}): BodyMultiViewStereo | null {
+};
+
+export function buildClassicalMultiViewStereo(
+  params: BodyMvsBuildInput,
+): BodyMultiViewStereo | null {
   if (params.diagnostics) {
     params.diagnostics.validDepthCount = 0;
     params.diagnostics.meanConfidence = 0;

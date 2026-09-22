@@ -1626,6 +1626,18 @@ function extractTsdfSurface(tsdf: BodyTsdfVolume) {
   };
 }
 
+export type MultiViewStereoDiagnostics = {
+  validDepthCount: number;
+  meanConfidence: number;
+  crossViewConsistency: number;
+  surfaceTriangleCount: number;
+  rejection:
+    | "none"
+    | "missing-eight-view-sdf"
+    | "insufficient-depth-confidence"
+    | "insufficient-surface";
+};
+
 export function buildClassicalMultiViewStereo(params: {
   hull: BodyVisualHull;
   images: Record<BodyViewId, RgbaImage>;
@@ -1633,11 +1645,23 @@ export function buildClassicalMultiViewStereo(params: {
   silhouettes: Record<BodyViewId, BodySilhouette>;
   bodyHeightCm: number;
   optics?: OpticalCalibrationProfile;
+  diagnostics?: MultiViewStereoDiagnostics;
 }): BodyMultiViewStereo | null {
+  if (params.diagnostics) {
+    params.diagnostics.validDepthCount = 0;
+    params.diagnostics.meanConfidence = 0;
+    params.diagnostics.crossViewConsistency = 0;
+    params.diagnostics.surfaceTriangleCount = 0;
+    params.diagnostics.rejection = "none";
+  }
+
   if (
     params.hull.viewCount !== 8 ||
     !params.hull.signedDistanceField
   ) {
+    if (params.diagnostics) {
+      params.diagnostics.rejection = "missing-eight-view-sdf";
+    }
     return null;
   }
 
@@ -1720,11 +1744,22 @@ export function buildClassicalMultiViewStereo(params: {
     ? confidenceSum / validDepthCount
     : 0;
 
+  if (params.diagnostics) {
+    params.diagnostics.validDepthCount = validDepthCount;
+    params.diagnostics.meanConfidence = meanConfidence;
+    params.diagnostics.crossViewConsistency =
+      crossViewConsistency;
+  }
+
   if (
     validDepthCount < 120 ||
     meanConfidence < 0.16 ||
     crossViewConsistency < 0.12
   ) {
+    if (params.diagnostics) {
+      params.diagnostics.rejection =
+        "insufficient-depth-confidence";
+    }
     return null;
   }
 
@@ -1736,7 +1771,18 @@ export function buildClassicalMultiViewStereo(params: {
   });
   const surface = extractTsdfSurface(tsdf);
 
-  if (surface.indices.length < 300) return null;
+  if (params.diagnostics) {
+    params.diagnostics.surfaceTriangleCount =
+      surface.indices.length / 3;
+  }
+
+  if (surface.indices.length < 300) {
+    if (params.diagnostics) {
+      params.diagnostics.rejection =
+        "insufficient-surface";
+    }
+    return null;
+  }
 
   let fusedVoxelCount = 0;
   for (const weight of tsdf.weights) {

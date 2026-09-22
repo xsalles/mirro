@@ -398,8 +398,10 @@ export default function BodyPage() {
         <section className="grid gap-5 rounded-2xl bg-[var(--ink)] p-5 text-white sm:p-7 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div>
             <h2 className="font-display text-3xl font-bold tracking-[-.04em]">
-              {calibration.version === 8
-                ? "Scanner MVS v8 pronto"
+              {calibration.version === 9
+                ? "Scanner robusto v9 pronto"
+                : calibration.version === 8
+                  ? "Scanner MVS v8 pronto"
                 : calibration.version === 7
                   ? "Scanner geométrico v7 pronto"
                 : calibration.version === 6
@@ -411,8 +413,10 @@ export default function BodyPage() {
                   : "BodyMesh anatômico pronto"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">
-              {calibration.version === 8 && mvs
-                ? `MVS clássico ativo: 8 depth maps por ZNCC, consistência entre vistas e fusão TSDF. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras de profundidade sobreviveram aos filtros; o SDF do visual hull continua sendo o envelope físico da roupa.`
+              {calibration.version === 9 && mvs
+                ? `MVS robusto ativo: ZNCC + Census + gradiente, busca coarse-to-fine e profundidade subpixel. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras sobreviveram aos filtros; execução ${mvs.executionBackend ?? "local"} e o SDF continua sendo o envelope físico conservador.`
+                : calibration.version === 8 && mvs
+                  ? `MVS clássico ativo: 8 depth maps por ZNCC, consistência entre vistas e fusão TSDF. ${mvs.validDepthCount.toLocaleString("pt-BR")} amostras de profundidade sobreviveram aos filtros; o SDF do visual hull continua sendo o envelope físico da roupa.`
                 : calibration.version === 7 && calibration.mesh.visualHull?.signedDistanceField
                   ? `8 vistas a cada 45°, visual hull apertado nas diagonais e SDF 3D ativo para colisão por gradiente.${photometric?.refinedVertexCount ? ` Plane-sweep fotométrico refinou ${photometric.refinedVertexCount.toLocaleString("pt-BR")} vértices do torso.` : ""}`
                 : calibration.version === 6 && calibration.mesh.visualHull
@@ -426,7 +430,7 @@ export default function BodyPage() {
                   : "Fusão multi-view em perspectiva fraca. Use o cartão A4 nas quatro fotos para ativar a calibração métrica."}
             </p>
 
-            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-12">
+            <dl className="mt-7 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-15">
               <div>
                 <dt className="text-xs font-semibold text-white/55">Qualidade</dt>
                 <dd className="mt-1 text-xl font-bold tabular-nums">{Math.round(calibration.quality.score * 100)}%</dd>
@@ -449,6 +453,30 @@ export default function BodyPage() {
                   {visualHull
                     ? `${visualHull.occupiedVoxelCount.toLocaleString("pt-BR")} · ${visualHull.resolution.x}×${visualHull.resolution.y}×${visualHull.resolution.z}`
                     : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Engine MVS</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs
+                    ? `${mvs.executionBackend ?? "local"} · ${mvs.matchingKernel ?? "JS"}`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Subpixel</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs
+                    ? `${(mvs.subpixelRefinedCount ?? 0).toLocaleString("pt-BR")} pts`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold text-white/55">Eixo turntable</dt>
+                <dd className="mt-1 text-sm font-bold tabular-nums">
+                  {mvs?.turntableRig?.optimized
+                    ? `${mvs.turntableRig.centerResidualCm.toFixed(2)} cm RMS`
+                    : "fallback"}
                 </dd>
               </div>
               <div>
@@ -552,8 +580,10 @@ export default function BodyPage() {
               </div>
             ) : (
               <p className="mt-6 text-sm font-semibold text-[var(--mint)]">
-                {calibration.version === 8
-                  ? "Depth maps ZNCC, consistência cruzada, TSDF e superfície MVS concluídos localmente."
+                {calibration.version === 9
+                  ? "MVS robusto, subpixel, eixo compartilhado e TSDF concluídos fora da UI quando Worker está disponível."
+                  : calibration.version === 8
+                    ? "Depth maps ZNCC, consistência cruzada, TSDF e superfície MVS concluídos localmente."
                   : calibration.version === 7
                     ? "8-view visual hull, SDF 3D e seam optimization concluídos localmente."
                   : calibration.version === 6

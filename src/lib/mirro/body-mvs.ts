@@ -1535,6 +1535,17 @@ function extractTsdfSurface(tsdf: BodyTsdfVolume) {
             point(x + dx, y + dy, z + dz),
         );
         const cornerValues = cornerIndices.map(value);
+        let hasNegative = false;
+        let hasNonNegative = false;
+        for (const cornerValue of cornerValues) {
+          if (cornerValue < 0) hasNegative = true;
+          else hasNonNegative = true;
+          if (hasNegative && hasNonNegative) break;
+        }
+        if (!hasNegative || !hasNonNegative) {
+          continue;
+        }
+
         for (const tetra of TETRAHEDRA) {
           const inside = tetra.filter(
             (corner) => cornerValues[corner] < 0,

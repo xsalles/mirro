@@ -5,6 +5,7 @@ import {
 } from "./body-calibration";
 import { buildBodyVisualHull } from "./body-visual-hull";
 import { refineVisualHullPhotometrically } from "./body-photometric-refinement";
+import { buildClassicalMultiViewStereo } from "./body-mvs";
 import {
   BODY_VIEW_LABEL,
   BODY_VIEW_SEQUENCE,
@@ -327,6 +328,19 @@ export async function calibrateBodyFromPhotos(
     ]),
   ) as Record<BodySide, Uint8Array>;
 
+  const denseImages = Object.fromEntries(
+    workingEntries.map((entry) => [
+      entry.side,
+      entry.image,
+    ]),
+  ) as Partial<Record<BodyViewId, RgbaImage>>;
+  const denseMasks = Object.fromEntries(
+    workingEntries.map((entry) => [
+      entry.side,
+      entry.mask,
+    ]),
+  ) as Partial<Record<BodyViewId, Uint8Array>>;
+
   const textureCalibration =
     analyzeBodyTextureCalibration({
       images,
@@ -343,6 +357,7 @@ export async function calibrateBodyFromPhotos(
     BodyCalibration["mesh"]["visualHull"]
   > | null = null;
   let visualHullWarning: string | null = null;
+  let multiViewStereoWarning: string | null = null;
 
   if (base.quality.score >= 0.5) {
     try {
@@ -375,21 +390,50 @@ export async function calibrateBodyFromPhotos(
         visualHull = refineVisualHullPhotometrically({
           hull: visualHull,
           baseMesh: base.mesh,
-          images: Object.fromEntries(
-            workingEntries.map((entry) => [
-              entry.side,
-              entry.image,
-            ]),
-          ) as Partial<Record<BodyViewId, RgbaImage>>,
-          masks: Object.fromEntries(
-            workingEntries.map((entry) => [
-              entry.side,
-              entry.mask,
-            ]),
-          ) as Partial<Record<BodyViewId, Uint8Array>>,
+          images: denseImages,
+          masks: denseMasks,
           silhouettes: denseSilhouettes,
           bodyHeightCm: measurements.heightCm,
         });
+
+        const hasAllDenseInputs = BODY_VIEW_SEQUENCE.every(
+          (view) =>
+            Boolean(
+              denseImages[view] &&
+                denseMasks[view] &&
+                denseSilhouettes[view],
+            ),
+        );
+
+        if (hasAllDenseInputs) {
+          const multiViewStereo =
+            buildClassicalMultiViewStereo({
+              hull: visualHull,
+              images: denseImages as Record<
+                BodyViewId,
+                RgbaImage
+              >,
+              masks: denseMasks as Record<
+                BodyViewId,
+                Uint8Array
+              >,
+              silhouettes: denseSilhouettes as Record<
+                BodyViewId,
+                BodySilhouette
+              >,
+              bodyHeightCm: measurements.heightCm,
+            });
+
+          if (multiViewStereo) {
+            visualHull = {
+              ...visualHull,
+              multiViewStereo,
+            };
+          } else {
+            multiViewStereoWarning =
+              "As oito vistas não tiveram textura/correspondência suficiente para gerar um TSDF MVS confiável; o MIRRO manteve o visual hull + SDF.";
+          }
+        }
       }
     } catch (error) {
       visualHullWarning =
@@ -415,6 +459,9 @@ export async function calibrateBodyFromPhotos(
     ...(visualHullWarning
       ? [visualHullWarning]
       : []),
+    ...(multiViewStereoWarning
+      ? [multiViewStereoWarning]
+      : []),
     ...(opticsMismatch
       ? [
           "O perfil óptico salvo usa outra proporção de imagem; a correção dedicada não foi aplicada nesta captura.",
@@ -427,27 +474,34 @@ export async function calibrateBodyFromPhotos(
     visualHull?.viewCount === 8 &&
       visualHull.signedDistanceField,
   );
+  const hasMultiViewStereo = Boolean(
+    visualHull?.multiViewStereo,
+  );
   const hasBodyLens = cameraRig?.version === 2;
   const version: BodyCalibration["version"] =
-    hasEightViewSdf
-      ? 7
-      : hasVisualHull
-        ? 6
-        : hasBodyLens
-          ? 5
-          : cameraRig
-            ? 4
-            : base.version;
+    hasMultiViewStereo
+      ? 8
+      : hasEightViewSdf
+        ? 7
+        : hasVisualHull
+          ? 6
+          : hasBodyLens
+            ? 5
+            : cameraRig
+              ? 4
+              : base.version;
   const method: BodyCalibration["method"] =
-    hasEightViewSdf
-      ? "eight-view-sdf-gradient-seams-v7"
-      : hasVisualHull
-        ? "visual-hull-multiband-v6"
-        : hasBodyLens
-          ? "lens-undistorted-local-color-surface-v5"
-          : cameraRig
-            ? "pinhole-bundle-anatomical-v4"
-            : base.method;
+    hasMultiViewStereo
+      ? "turntable-zncc-tsdf-mvs-v8"
+      : hasEightViewSdf
+        ? "eight-view-sdf-gradient-seams-v7"
+        : hasVisualHull
+          ? "visual-hull-multiband-v6"
+          : hasBodyLens
+            ? "lens-undistorted-local-color-surface-v5"
+            : cameraRig
+              ? "pinhole-bundle-anatomical-v4"
+              : base.method;
 
   const opticalScore = optics
     ? optics.conditionScore * 0.04
@@ -459,13 +513,22 @@ export async function calibrateBodyFromPhotos(
           cameraRig.rmsReprojectionErrorPx / 5,
       ) * 0.14
     : 0;
-  const denseBonus = hasVisualHull ? 0.08 : 0;
+  const denseBonus = hasVisualHull ? 0.06 : 0;
+  const mvsBonus = hasMultiViewStereo
+    ? Math.min(
+        0.07,
+        0.035 +
+          (visualHull?.multiViewStereo?.meanConfidence ?? 0) *
+            0.035,
+      )
+    : 0;
   const baseWeight =
     1 -
     0.1 -
     (cameraRig ? 0.14 : 0) -
     (optics ? 0.04 : 0) -
-    (hasVisualHull ? 0.08 : 0);
+    (hasVisualHull ? 0.06 : 0) -
+    (hasMultiViewStereo ? 0.07 : 0);
 
   return {
     ...base,
@@ -485,7 +548,8 @@ export async function calibrateBodyFromPhotos(
           textureCalibration.score * 0.1 +
           cameraScore +
           opticalScore +
-          denseBonus,
+          denseBonus +
+          mvsBonus,
       ),
       warnings: [...new Set(warnings)],
     },

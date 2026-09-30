@@ -51,7 +51,7 @@ describe("fabric datasheet parser", () => {
         "Referência: TEC-77",
         "Data do ensaio: 21/09/2026",
         "Gramatura: 6 oz/yd²",
-        "Espessura: 650 microns",
+        "Espessura: 650 µm",
         "Elasticidade urdume: 5%",
         "Elasticidade trama: 14%",
         "Rigidez de dobra: 52",

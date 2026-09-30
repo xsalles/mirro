@@ -134,7 +134,7 @@ export default function WardrobePage() {
     }));
     setDatasheetEvidence(imported);
     setErrors((prev) => {
-      const next = {
+      const next: Record<string, string> = {
         ...prev,
         fabricReference: "",
         form: "",

@@ -23,6 +23,7 @@ export type AppliedFabricDatasheet =
   };
 
 type FabricDatasheetImportProps = {
+  current: AppliedFabricDatasheet | null;
   onImported: (
     imported: AppliedFabricDatasheet,
   ) => void;
@@ -68,16 +69,13 @@ async function sha256Hex(file: File) {
 }
 
 export function FabricDatasheetImport({
+  current,
   onImported,
 }: FabricDatasheetImportProps) {
   const [status, setStatus] = useState<
     "idle" | "reading" | "success" | "error"
   >("idle");
   const [message, setMessage] = useState("");
-  const [lastImport, setLastImport] =
-    useState<AppliedFabricDatasheet | null>(
-      null,
-    );
 
   async function select(file?: File) {
     if (!file) return;
@@ -129,7 +127,6 @@ export function FabricDatasheetImport({
         fileName: file.name,
         sha256,
       };
-      setLastImport(imported);
       setStatus("success");
       setMessage(
         `${imported.recognizedFields.length}/6 parâmetros reconhecidos e prontos para revisão.`,
@@ -170,7 +167,7 @@ export function FabricDatasheetImport({
 
         <label className="inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-xl border border-[var(--line)] bg-white px-4 py-2.5 text-sm font-semibold hover:bg-[var(--surface-2)] focus-within:ring-2 focus-within:ring-[var(--thread)] focus-within:ring-offset-2">
           <Upload size={16} aria-hidden="true" />
-          {lastImport
+          {current
             ? "Trocar ficha"
             : "Escolher ficha"}
           <input
@@ -219,7 +216,7 @@ export function FabricDatasheetImport({
           </div>
         ) : null}
 
-        {status === "success" && lastImport ? (
+        {status === "success" && current ? (
           <div className="rounded-xl bg-emerald-50/70 p-3">
             <div className="flex gap-2 text-xs leading-5">
               <Check
@@ -229,17 +226,17 @@ export function FabricDatasheetImport({
               />
               <div>
                 <p className="font-semibold text-emerald-900">
-                  {lastImport.fileName} · {message}
+                  {current.fileName} · {message}
                 </p>
                 <p className="mt-1 break-all text-[11px] text-[var(--muted)]">
                   SHA-256{" "}
-                  {lastImport.sha256.slice(0, 16)}…
+                  {current.sha256.slice(0, 16)}…
                   · parser v
-                  {lastImport.parserVersion}
+                  {current.parserVersion}
                 </p>
                 <p className="mt-2 text-[11px] leading-5 text-[var(--muted)]">
                   Importados:{" "}
-                  {lastImport.recognizedFields
+                  {current.recognizedFields
                     .map(
                       (field) =>
                         FABRIC_FIELD_LABELS[field],
@@ -247,9 +244,9 @@ export function FabricDatasheetImport({
                     .join(", ")}
                   .
                 </p>
-                {lastImport.warnings.length ? (
+                {current.warnings.length ? (
                   <ul className="mt-2 space-y-1 text-[11px] leading-5 text-[var(--muted)]">
-                    {lastImport.warnings.map(
+                    {current.warnings.map(
                       (warning) => (
                         <li key={warning}>
                           {warning}

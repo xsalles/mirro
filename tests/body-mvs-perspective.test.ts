@@ -9,6 +9,10 @@ import {
   BODY_VIEW_SEQUENCE,
 } from "../src/lib/mirro/body-views";
 import { buildSignedDistanceField } from "../src/lib/mirro/signed-distance-field";
+import {
+  buildSurfaceAccuracyReport,
+  summarizeSurfaceAccuracyEvidence,
+} from "../src/lib/mirro/surface-accuracy";
 import type {
   BodySilhouette,
   BodyViewId,
@@ -154,6 +158,35 @@ function syntheticPerspectiveView(view: BodyViewId) {
   }
 
   return { image, mask };
+}
+
+function expectedPerspectiveDepth(
+  pixelX: number,
+  pixelY: number,
+) {
+  const rayX = (pixelX - CX) / FX;
+  const rayY = -(pixelY - CY) / FY;
+  const a = 1 + rayX * rayX;
+  const b = -2 * CAMERA_DISTANCE_CM;
+  const cc =
+    CAMERA_DISTANCE_CM * CAMERA_DISTANCE_CM -
+    TRUE_RADIUS_CM * TRUE_RADIUS_CM;
+  const discriminant = b * b - 4 * a * cc;
+  if (discriminant <= 0) return null;
+
+  const cameraDepth =
+    (-b - Math.sqrt(discriminant)) / (2 * a);
+  if (cameraDepth <= 0) return null;
+
+  const worldY = rayY * cameraDepth;
+  if (
+    worldY < -BODY_HEIGHT_CM / 2 ||
+    worldY > BODY_HEIGHT_CM / 2
+  ) {
+    return null;
+  }
+
+  return CAMERA_DISTANCE_CM - cameraDepth;
 }
 
 function hull(): BodyVisualHull {
@@ -408,5 +441,66 @@ describe("calibrated perspective turntable MVS", () => {
     expect(central?.confidence ?? 0).toBeGreaterThan(0);
     expect(central?.depth ?? 0).toBeGreaterThan(16.5);
     expect(central?.depth ?? Infinity).toBeLessThan(19.4);
-  }, 10_000);
+
+    const accuracyReports = BODY_VIEW_SEQUENCE.map(
+      (view) => {
+        const map = mvs.depthMaps[view];
+        const errorsCm: number[] = [];
+
+        for (let y = 0; y < map.height; y += 1) {
+          for (let x = 0; x < map.width; x += 1) {
+            const index = y * map.width + x;
+            if (!map.confidence[index]) continue;
+
+            const pixelX =
+              BOUNDS.x +
+              ((x + 0.5) / map.width) *
+                BOUNDS.width;
+            const pixelY =
+              BOUNDS.y +
+              ((y + 0.5) / map.height) *
+                BOUNDS.height;
+            const referenceDepth =
+              expectedPerspectiveDepth(
+                pixelX,
+                pixelY,
+              );
+            if (referenceDepth === null) continue;
+
+            const reconstructedDepth =
+              map.depthValues[index] *
+              map.depthQuantizationCm;
+            errorsCm.push(
+              reconstructedDepth - referenceDepth,
+            );
+          }
+        }
+
+        return buildSurfaceAccuracyReport({
+          datasetId: `cylinder-${view}`,
+          source: "synthetic",
+          errorsCm,
+        });
+      },
+    );
+
+    for (const report of accuracyReports) {
+      expect(
+        report.passed,
+        `${report.datasetId}: ${report.failures.join("; ")}`,
+      ).toBe(true);
+    }
+
+    const accuracyEvidence =
+      summarizeSurfaceAccuracyEvidence(
+        accuracyReports,
+      );
+    expect(accuracyEvidence.syntheticDatasets).toBe(8);
+    expect(accuracyEvidence.realCalibratedDatasets).toBe(
+      0,
+    );
+    expect(
+      accuracyEvidence.canRaiseDepthGridCap,
+    ).toBe(false);
+  }, 20_000);
 });

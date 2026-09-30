@@ -83,9 +83,10 @@ describe("body measurement consistency", () => {
   it("flags scale relationships without turning them into blocking errors", () => {
     const issues = checkBodyMeasurementConsistency({
       ...BASE,
-      shoulderWidthCm: 65,
+      heightCm: 230,
+      shoulderWidthCm: 25,
       armLengthCm: 35,
-      inseamCm: 110,
+      inseamCm: 45,
       neckCm: 64,
     });
 

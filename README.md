@@ -15,6 +15,7 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - BodyCalibration v11 with image-edge feature residuals, MAD-based frame rejection, centered vertical-axis validation and edge-aware depth densification after sparse cross-view validation
 - MIRRO v12 accuracy-evidence gate with deterministic MAE/RMSE/p95/bias metrics, eight-view synthetic ground-truth validation and an explicit block on raising the 72-column depth cap until real calibrated evidence exists
 - MIRRO v13 guided body measurements for forearm, calf, neck and shoulder slope, with deterministic non-blocking consistency checks and first-invalid focus in the body form
+- MIRRO v14 local fabric-datasheet import for JSON/CSV/TSV/TXT with unit conversion, shared physical limits, SHA-256 source provenance and per-field measured-state tracking
 - MVS uses calibrated turntable perspective from the saved optical profile when compatible, with metric-orthographic fallback
 - MVS/TSDF runs in a dedicated Web Worker when available; Census Hamming uses a WASM i32.popcnt microkernel and v11 adds benchmark-gated AssemblyScript SIMD kernels for fixed 3×3 patch statistics and up-to-eight-view TSDF fusion reductions, with deterministic JS fallbacks
 - Garment front/back alpha calibration from the user's real photos
@@ -31,6 +32,8 @@ A local-first digital wardrobe and deterministic virtual try-on experiment — w
 - Responsive product shell
 
 MIRRO v13 improves the body-input side without changing the reconstruction claim: forearm, calf, neck and shoulder slope now use a guided capture flow with explicit measurement instructions and advisory consistency checks. The checks never override valid user-entered anatomy; they only surface values worth remeasuring before calibration.
+
+MIRRO v14 improves fabric evidence without changing XPBD itself: supported manufacturer/lab sheets are parsed entirely in the browser, recognized physical fields prefill the garment form, and only fields still linked to the imported source are persisted as measured. Manual edits detach that field from imported provenance while preserving the remaining evidence. The source file is not stored; MIRRO keeps derived values plus file name, format, parser version and SHA-256. See `FABRIC-DATASHEET.md`.
 
 The current **Físico 3D beta** still uses the v11 conservative reconstruction path. MIRRO v12 adds a separate accuracy-evidence layer around that engine rather than silently increasing density. CI now measures the eight calibrated synthetic turntable views against analytic ground truth, while the production depth-grid cap remains 72 columns until the evidence policy also contains independently calibrated real scans. See `SURFACE-ACCURACY.md`.
 

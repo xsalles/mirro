@@ -2,13 +2,21 @@
 
 import { Check, CircleAlert, ImagePlus, Ruler, ShieldCheck } from "lucide-react";
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { BodyMeshPreview } from "@/components/body-mesh-preview";
+import {
+  GuidedBodyMeasurements,
+  type BodyMeasurementDraft,
+} from "@/components/guided-body-measurements";
 import { Button } from "@/components/ui/button";
 import { useMirro } from "@/components/mirro-provider";
 import { calibrateBodyFromPhotos } from "@/lib/mirro/body-image-processing";
 import { loadMedia } from "@/lib/mirro/db";
-import type { BodyViewId, MediaRef } from "@/lib/mirro/types";
+import type {
+  BodyMeasurements,
+  BodyViewId,
+  MediaRef,
+} from "@/lib/mirro/types";
 import { validMeasurement, validateImage } from "@/lib/mirro/validation";
 
 const CAPTURE_VIEWS: Array<{
@@ -32,7 +40,9 @@ type CalibrationStatus = "idle" | "processing" | "saving" | "saved";
 export default function BodyPage() {
   const { state, saveProfile } = useMirro();
   const current = state.profile;
-  const [measurements, setMeasurements] = useState({
+  const formRef = useRef<HTMLFormElement>(null);
+  const [measurements, setMeasurements] =
+    useState<BodyMeasurementDraft>({
     heightCm: current?.heightCm ? String(current.heightCm) : "",
     chestCm: current?.chestCm ? String(current.chestCm) : "",
     waistCm: current?.waistCm ? String(current.waistCm) : "",
@@ -59,6 +69,22 @@ export default function BodyPage() {
       setFiles((prev) => ({ ...prev, [side]: file }));
       setStatus("idle");
     }
+  }
+
+  function updateMeasurement(
+    key: keyof BodyMeasurements,
+    value: string,
+  ) {
+    setMeasurements((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+    setErrors((prev) => ({
+      ...prev,
+      [key]: "",
+      calibration: "",
+    }));
+    setStatus("idle");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -138,7 +164,16 @@ export default function BodyPage() {
     }
 
     setErrors(nextErrors);
-    if (Object.values(nextErrors).some(Boolean)) return;
+    if (Object.values(nextErrors).some(Boolean)) {
+      requestAnimationFrame(() => {
+        formRef.current
+          ?.querySelector<HTMLElement>(
+            '[aria-invalid="true"]',
+          )
+          ?.focus();
+      });
+      return;
+    }
 
     try {
       setStatus("processing");
@@ -230,7 +265,12 @@ export default function BodyPage() {
         </span>
       </div>
 
-      <form noValidate onSubmit={submit} className="space-y-8">
+      <form
+        ref={formRef}
+        noValidate
+        onSubmit={submit}
+        className="space-y-8"
+      >
         <section>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -323,10 +363,12 @@ export default function BodyPage() {
                     aria-invalid={Boolean(errors[key])}
                     aria-describedby={errors[key] ? `${key}-error` : undefined}
                     value={measurements[key as keyof typeof measurements]}
-                    onChange={(e) => {
-                      setMeasurements((prev) => ({ ...prev, [key]: e.target.value }));
-                      setStatus("idle");
-                    }}
+                    onChange={(e) =>
+                      updateMeasurement(
+                        key as keyof BodyMeasurements,
+                        e.target.value,
+                      )
+                    }
                   />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[var(--muted)]">
                     {unit}
@@ -345,13 +387,18 @@ export default function BodyPage() {
         <section className="rounded-2xl border border-[var(--line)] bg-white p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-bold">Medidas anatômicas avançadas</h2>
+              <h2 className="text-lg font-bold">
+                Estrutura corporal complementar
+              </h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-                Opcionais, mas recomendadas. Elas substituem proporções médias na posição dos ombros, comprimento e espessura dos braços, antebraços, pescoço, coxas, panturrilhas e pernas.
+                Estas medidas opcionais substituem proporções
+                médias para ombros, braços, coxas e pernas.
+                As quatro medidas mais sensíveis a erro de
+                captura ficam no fluxo guiado logo abaixo.
               </p>
             </div>
             <span className="rounded-full bg-[var(--thread-soft)] px-3 py-1 text-xs font-semibold text-[var(--thread)]">
-              precisão v3
+              anatomia semântica
             </span>
           </div>
 
@@ -362,13 +409,14 @@ export default function BodyPage() {
               ["upperArmCm", "Circ. braço", "cm"],
               ["thighCm", "Circ. coxa", "cm"],
               ["inseamCm", "Entreperna", "cm"],
-              ["forearmCm", "Circ. antebraço", "cm"],
-              ["calfCm", "Circ. panturrilha", "cm"],
-              ["neckCm", "Circ. pescoço", "cm"],
-              ["shoulderSlopeDeg", "Inclinação do ombro", "°"],
             ].map(([key, label, unit]) => (
               <div key={key}>
-                <label htmlFor={key} className="text-sm font-semibold">{label}</label>
+                <label
+                  htmlFor={key}
+                  className="text-sm font-semibold"
+                >
+                  {label}
+                </label>
                 <div className="relative mt-2">
                   <input
                     id={key}
@@ -376,19 +424,32 @@ export default function BodyPage() {
                     inputMode="decimal"
                     min="1"
                     aria-invalid={Boolean(errors[key])}
-                    aria-describedby={errors[key] ? `${key}-error` : undefined}
-                    value={measurements[key as keyof typeof measurements]}
-                    onChange={(e) => {
-                      setMeasurements((prev) => ({ ...prev, [key]: e.target.value }));
-                      setStatus("idle");
-                    }}
+                    aria-describedby={
+                      errors[key]
+                        ? `${key}-error`
+                        : undefined
+                    }
+                    value={
+                      measurements[
+                        key as keyof BodyMeasurementDraft
+                      ]
+                    }
+                    onChange={(event) =>
+                      updateMeasurement(
+                        key as keyof BodyMeasurements,
+                        event.target.value,
+                      )
+                    }
                   />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-[var(--muted)]">
                     {unit}
                   </span>
                 </div>
                 {errors[key] ? (
-                  <p id={`${key}-error`} className="mt-2 text-sm text-[var(--danger)]">
+                  <p
+                    id={`${key}-error`}
+                    className="mt-2 text-sm text-[var(--danger)]"
+                  >
                     {errors[key]}
                   </p>
                 ) : null}
@@ -396,6 +457,12 @@ export default function BodyPage() {
             ))}
           </div>
         </section>
+
+        <GuidedBodyMeasurements
+          measurements={measurements}
+          errors={errors}
+          onChange={updateMeasurement}
+        />
 
         {errors.calibration ? (
           <div role="alert" className="flex gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-[var(--danger)]">

@@ -281,11 +281,19 @@ The first end-to-end synthetic evidence reuses the calibrated perspective turnta
 
 Real evidence must come from an independent calibrated geometry source. Raw body photographs or identifiable scan media must not be committed; only anonymized derived numeric evidence needed for reproducibility should enter the repository. Alignment may be rigid, but validation must not non-rigidly deform the reference or MIRRO surface to reduce reported error. See `SURFACE-ACCURACY.md`.
 
+## Guided body measurements v13
+
+V13 adds a measurement-input layer without changing BodyCalibration v11 or the reconstruction engine. Four measurements that previously appeared as plain optional numeric fields — forearm circumference, calf circumference, neck circumference and shoulder slope — are now presented as a sequential guided flow with explicit measurement location and a second capture checkpoint.
+
+`src/lib/mirro/body-measurement-consistency.ts` performs deterministic cross-checks against related values such as upper-arm/thigh circumference and overall body scale. The checks use deliberately broad ratios and produce only `review` or `info` issues. They are not validation failures, do not mutate values and do not prevent calibration when the individual field remains inside its existing hard range. This distinction is intentional because natural anatomy varies and the consistency layer exists to catch likely input mistakes, not to define a valid body shape.
+
+The body form now clears stale field errors when that field changes and focuses the first invalid control after an invalid submit. Guided measurements remain local state and persist through the existing BodyProfile path; no new network or storage boundary is introduced.
+
 ## Engine roadmap
 
 - Expand v12 accuracy evidence with more synthetic body shapes/lighting conditions and at least three independent real calibrated scans; keep the depth-grid cap at 72 until the evidence gate passes.
 - Evaluate a memory-resident WASM implementation of projection/sampling/outer voxel traversal only if device benchmarks beat the current Worker TypeScript architecture; v11 intentionally does not claim this yet.
-- Add guided measurement UX and consistency checks for forearm, calf, neck and shoulder slope.
+- Expand the v13 guided measurement system with optional repeated-measurement confidence/history only if the UX can stay local-first and avoid turning advisory consistency checks into body-shape rejection.
 - Add import/parsing for verified manufacturer/lab material sheets instead of requiring manual transcription of referenced measurements.
 - Expand semantic garment construction to jacket opening/collar/lapels, skirt/dress hem shapes and more category-specific pattern landmarks.
 - Move the Worker solver to WASM when mesh density or semantic topology increases substantially.

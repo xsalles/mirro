@@ -175,8 +175,6 @@ const TESTED_AT_ALIASES = [
   "testedat",
   "tested at",
   "test date",
-  "date",
-  "data",
   "data ensaio",
   "data do ensaio",
 ];

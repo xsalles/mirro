@@ -269,9 +269,21 @@ This is deliberately not described as a full native MVS port. Camera/world proje
 
 The body form additionally accepts forearm circumference, calf circumference, neck circumference and shoulder slope. Forearm/calf values alter tapered limb end radii, shoulder slope changes the shoulder joint Y position, and neck circumference is stored as semantic anatomy and influences the head/neck envelope. These measurements remain optional and use bounded deterministic fallbacks when absent.
 
+## Surface accuracy evidence gate v12
+
+V12 adds an explicit accuracy-evidence layer without changing the runtime BodyCalibration schema or increasing the v11 dense-depth cap.
+
+`src/lib/mirro/surface-accuracy.ts` turns signed centimeter errors into deterministic MAE, RMSE, p50/p95 absolute error, maximum error, signed bias and coverage metrics. Each dataset is evaluated against explicit thresholds and tagged as either `synthetic` or `real-calibrated`.
+
+The default release policy requires at least six passing synthetic datasets, at least three passing independently calibrated real datasets, and zero failing datasets before `canRaiseDepthGridCap` can become true. This boolean is evidence for an engineering decision; it does not itself mutate runtime density.
+
+The first end-to-end synthetic evidence reuses the calibrated perspective turntable fixture and evaluates all eight v11 dense depth maps against analytic ray/cylinder ground truth. The gate remains intentionally closed because repository CI does not contain real body-scan evidence.
+
+Real evidence must come from an independent calibrated geometry source. Raw body photographs or identifiable scan media must not be committed; only anonymized derived numeric evidence needed for reproducibility should enter the repository. Alignment may be rigid, but validation must not non-rigidly deform the reference or MIRRO surface to reduce reported error. See `SURFACE-ACCURACY.md`.
+
 ## Engine roadmap
 
-- Quantify v11 dense-surface error against larger synthetic fixtures and real calibrated scans before raising the depth-grid cap beyond 72 columns.
+- Expand v12 accuracy evidence with more synthetic body shapes/lighting conditions and at least three independent real calibrated scans; keep the depth-grid cap at 72 until the evidence gate passes.
 - Evaluate a memory-resident WASM implementation of projection/sampling/outer voxel traversal only if device benchmarks beat the current Worker TypeScript architecture; v11 intentionally does not claim this yet.
 - Add guided measurement UX and consistency checks for forearm, calf, neck and shoulder slope.
 - Add import/parsing for verified manufacturer/lab material sheets instead of requiring manual transcription of referenced measurements.

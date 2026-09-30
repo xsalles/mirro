@@ -495,11 +495,16 @@ export async function calibrateBodyFromPhotos(
   const hasBundlePyramidMvs = Boolean(
     visualHull?.multiViewStereo?.version === 3,
   );
+  const hasFeatureDenseMvs = Boolean(
+    visualHull?.multiViewStereo?.version === 4,
+  );
   const hasBodyLens = cameraRig?.version === 2;
   const version: BodyCalibration["version"] =
-    hasBundlePyramidMvs
-      ? 10
-      : hasRobustMvs
+    hasFeatureDenseMvs
+      ? 11
+      : hasBundlePyramidMvs
+        ? 10
+        : hasRobustMvs
         ? 9
         : hasMultiViewStereo
           ? 8
@@ -513,9 +518,11 @@ export async function calibrateBodyFromPhotos(
                   ? 4
                   : base.version;
   const method: BodyCalibration["method"] =
-    hasBundlePyramidMvs
-      ? "bundle-pyramid-simd-mvs-v10"
-      : hasRobustMvs
+    hasFeatureDenseMvs
+      ? "feature-bundle-dense-wasm-mvs-v11"
+      : hasBundlePyramidMvs
+        ? "bundle-pyramid-simd-mvs-v10"
+        : hasRobustMvs
         ? "robust-subpixel-worker-mvs-v9"
         : hasMultiViewStereo
           ? "turntable-zncc-tsdf-mvs-v8"

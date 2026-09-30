@@ -233,6 +233,74 @@ describe("GarmentMesh + XPBD", () => {
     expect(mesh.boundsCm.height).toBeGreaterThan(bodyMesh.boundsCm.height * 0.35);
   });
 
+  it("builds jacket, dress and skirt as distinct semantic topologies", () => {
+    const bodyMesh = makeBodyMesh();
+    const calibration = calibrationFromProfiles();
+
+    const jacket = makeGarment(calibration);
+    jacket.category = "jacket";
+    jacket.sleeveLength = "long";
+    const jacketMesh = buildGarmentMesh({
+      garment: jacket,
+      calibration,
+      bodyMesh,
+    });
+    expect(jacketMesh.version).toBe(3);
+    expect(
+      jacketMesh.regions?.map((region) => region.kind),
+    ).toEqual(
+      expect.arrayContaining([
+        "torso-front",
+        "left-sleeve-front",
+        "right-sleeve-front",
+      ]),
+    );
+
+    const dress = makeGarment(calibration);
+    dress.category = "dress";
+    dress.sleeveLength = "short";
+    const dressMesh = buildGarmentMesh({
+      garment: dress,
+      calibration,
+      bodyMesh,
+    });
+    const dressKinds =
+      dressMesh.regions?.map((region) => region.kind) ??
+      [];
+    expect(dressKinds).toEqual(
+      expect.arrayContaining([
+        "torso-front",
+        "torso-back",
+        "dress-skirt-front",
+        "dress-skirt-back",
+      ]),
+    );
+    expect(
+      dressMesh.constraints.filter(
+        (constraint) => constraint.kind === "seam",
+      ).length,
+    ).toBeGreaterThan(100);
+
+    const skirt = makeGarment(calibration);
+    skirt.category = "skirt";
+    delete skirt.sleeveLength;
+    const skirtMesh = buildGarmentMesh({
+      garment: skirt,
+      calibration,
+      bodyMesh,
+    });
+    const skirtKinds =
+      skirtMesh.regions?.map((region) => region.kind) ??
+      [];
+    expect(skirtKinds).toEqual(
+      expect.arrayContaining([
+        "skirt-front",
+        "skirt-back",
+      ]),
+    );
+    expect(skirtKinds).not.toContain("torso-front");
+  });
+
   it("relaxes cloth under gravity while keeping particles outside the BodyMesh", () => {
     const bodyMesh = makeBodyMesh();
     const calibration = calibrationFromProfiles();

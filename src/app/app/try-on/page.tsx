@@ -92,6 +92,10 @@ export default function TryOnPage() {
         upperArmCm: profile.upperArmCm,
         thighCm: profile.thighCm,
         inseamCm: profile.inseamCm,
+        forearmCm: profile.forearmCm,
+        calfCm: profile.calfCm,
+        neckCm: profile.neckCm,
+        shoulderSlopeDeg: profile.shoulderSlopeDeg,
       },
     ).mesh;
   }, [profile]);

@@ -330,9 +330,9 @@ describe("calibrated perspective turntable MVS", () => {
       );
     }
 
-    expect(mvs.version).toBe(3);
+    expect(mvs.version).toBe(4);
     expect(mvs.method).toBe(
-      "turntable-bundle-pyramid-simd-v3",
+      "turntable-feature-bundle-dense-simd-v4",
     );
     expect(mvs.projectionModel).toBe(
       "calibrated-turntable-perspective",
@@ -341,15 +341,24 @@ describe("calibrated perspective turntable MVS", () => {
       "zncc-census-gradient",
     );
     expect(mvs.depthRefinement).toBe(
-      "coarse-to-fine-parabolic",
+      "coarse-to-fine-parabolic-edge-aware",
     );
     expect(mvs.turntableRig?.optimized).toBe(true);
-    expect(mvs.turntableRig?.version).toBe(2);
+    expect(mvs.turntableRig?.version).toBe(3);
     expect(mvs.turntableRig?.method).toBe(
-      "robust-axis-angle-tilt-bundle-v2",
+      "feature-residual-frame-rejection-bundle-v3",
     );
     expect(mvs.pyramidLevels).toBeGreaterThanOrEqual(2);
     expect(mvs.highDensityDepthWidth).toBe(30);
+    expect(mvs.depthMaps.front.version).toBe(3);
+    expect(mvs.depthMaps.front.sourceWidth).toBe(30);
+    expect(mvs.depthMaps.front.width).toBeGreaterThan(30);
+    expect(
+      mvs.turntableRig?.axisVerticalValidated,
+    ).toBe(true);
+    expect(
+      mvs.turntableRig?.rejectedViews ?? [],
+    ).toHaveLength(0);
     expect(
       Math.hypot(
         mvs.turntableRig?.axisCenterCm[0] ?? 99,
@@ -399,5 +408,5 @@ describe("calibrated perspective turntable MVS", () => {
     expect(central?.confidence ?? 0).toBeGreaterThan(0);
     expect(central?.depth ?? 0).toBeGreaterThan(16.5);
     expect(central?.depth ?? Infinity).toBeLessThan(19.4);
-  });
+  }, 10_000);
 });

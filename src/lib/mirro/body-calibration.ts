@@ -887,10 +887,17 @@ function buildAnatomicalMesh(
     centerZ: torsoCenterZ.slice(torsoTopRing, torsoBottomRing + 1),
   });
 
+  const neckRadiusCm = measurements.neckCm
+    ? clamp(measurements.neckCm / (Math.PI * 2), 3.6, 7.8)
+    : undefined;
   const headRadii: Vec3 = [
-    heightCm * 0.045,
+    neckRadiusCm
+      ? clamp(neckRadiusCm * 1.3, heightCm * 0.038, heightCm * 0.052)
+      : heightCm * 0.045,
     heightCm * 0.067,
-    heightCm * 0.054,
+    neckRadiusCm
+      ? clamp(neckRadiusCm * 1.15, heightCm * 0.046, heightCm * 0.061)
+      : heightCm * 0.054,
   ];
   const headCenter: Vec3 = [
     0,
@@ -926,7 +933,21 @@ function buildAnatomicalMesh(
   const armStartRadius = measurements.upperArmCm
     ? clamp(measurements.upperArmCm / (Math.PI * 2), 3.5, 7.8)
     : clamp(heightCm * 0.029, 4.2, 6.3);
-  const armEndRadius = clamp(armStartRadius * 0.64, 2.6, 4.8);
+  const forearmRadiusCm = measurements.forearmCm
+    ? clamp(measurements.forearmCm / (Math.PI * 2), 2.8, 6.2)
+    : undefined;
+  const armEndRadius = forearmRadiusCm
+    ? clamp(forearmRadiusCm * 0.78, 2.6, 4.9)
+    : clamp(armStartRadius * 0.64, 2.6, 4.8);
+  const shoulderSlopeDeg = clamp(
+    measurements.shoulderSlopeDeg ?? 8,
+    0,
+    25,
+  );
+  const shoulderDropCm =
+    Math.tan((shoulderSlopeDeg * Math.PI) / 180) *
+    shoulderHalfWidth;
+  const shoulderJointY = shoulderY - shoulderDropCm;
   const armLength = measurements.armLengthCm
     ? clamp(measurements.armLengthCm, heightCm * 0.22, heightCm * 0.42)
     : heightCm * 0.31;
@@ -934,13 +955,13 @@ function buildAnatomicalMesh(
   const armVerticalLength = Math.sqrt(
     Math.max(1, armLength * armLength - armHorizontalDrift * armHorizontalDrift),
   );
-  const wristY = shoulderY - armVerticalLength;
+  const wristY = shoulderJointY - armVerticalLength;
 
   for (const side of [-1, 1] as const) {
     const kind: BodyPartKind = side < 0 ? "left-arm" : "right-arm";
     const startPoint: Vec3 = [
       side * shoulderHalfWidth,
-      shoulderY,
+      shoulderJointY,
       shoulderCenterZ,
     ];
     const endPoint: Vec3 = [
@@ -986,7 +1007,12 @@ function buildAnatomicalMesh(
   const thighRadius = measurements.thighCm
     ? clamp(measurements.thighCm / (Math.PI * 2), 5.2, 10.5)
     : clamp(hipRadiusX * 0.4, 5.8, heightCm * 0.052);
-  const ankleRadius = clamp(thighRadius * 0.5, 3.0, 5.2);
+  const calfRadiusCm = measurements.calfCm
+    ? clamp(measurements.calfCm / (Math.PI * 2), 4.0, 8.2)
+    : undefined;
+  const ankleRadius = calfRadiusCm
+    ? clamp(calfRadiusCm * 0.62, 3.0, 5.3)
+    : clamp(thighRadius * 0.5, 3.0, 5.2);
 
   for (const side of [-1, 1] as const) {
     const kind: BodyPartKind = side < 0 ? "left-leg" : "right-leg";
@@ -1059,6 +1085,12 @@ function buildAnatomicalMesh(
     torsoBottomRing,
     parts,
     collisionPrimitives,
+    semanticMeasurements: {
+      neckRadiusCm,
+      forearmRadiusCm,
+      calfRadiusCm,
+      shoulderSlopeDeg,
+    },
     boundsCm: {
       width: maxX - minX,
       height: Math.max(heightCm, maxY - minY),

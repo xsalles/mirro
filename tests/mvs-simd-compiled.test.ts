@@ -35,6 +35,10 @@ type SimdExports = {
     a2: number,
     a3: number,
   ): number;
+  zncc9(...values: number[]): number;
+  stddev9(...values: number[]): number;
+  weightedMean8(...values: number[]): number;
+  weightSum8(...values: number[]): number;
 };
 
 describe("compiled MVS SIMD wasm", () => {
@@ -73,5 +77,19 @@ describe("compiled MVS SIMD wasm", () => {
     expect(
       exports.sum4(0.5, 1, 0.25, 2),
     ).toBeCloseTo(3.75, 5);
+
+    const a = [13, 22, 38, 51, 69, 87, 106, 122, 141];
+    const b = [15, 24, 36, 54, 67, 91, 103, 126, 139];
+    expect(exports.zncc9(...a, ...b)).toBeGreaterThan(0.98);
+    expect(exports.stddev9(...a)).toBeGreaterThan(35);
+
+    const depths = [1, 2, 3, 4, 0, 0, 0, 0];
+    const weights = [1, 1, 2, 0, 0, 0, 0, 0];
+    expect(
+      exports.weightedMean8(...depths, ...weights),
+    ).toBeCloseTo(2.25, 5);
+    expect(
+      exports.weightSum8(...weights),
+    ).toBeCloseTo(4, 5);
   });
 });

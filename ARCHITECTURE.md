@@ -52,11 +52,11 @@ Dense reconstruction uses a different capture contract: the phone remains fixed 
 
 Legacy garments without calibration are recalibrated on demand from their stored processed PNGs when physical try-on starts.
 
-## GarmentMesh v2 — semantic topology implemented
+## GarmentMesh v2/v3 — semantic topology implemented
 
-GarmentMesh v2 is no longer one rectangular front panel plus one back panel.
+GarmentMesh is no longer one rectangular front panel plus one back panel. V3 activates for explicit sleeve-length/new subtype topology while legacy v2 meshes remain readable.
 
-### Tops / shirts / hoodies
+### Tops / shirts / hoodies / jackets
 
 - independent torso front/back grids
 - independent left-sleeve front/back grids
@@ -66,7 +66,17 @@ GarmentMesh v2 is no longer one rectangular front panel plus one back panel.
 - sleeve side seams
 - sleeve-to-shoulder attachment constraints
 - sleeve geometry initialized around the matching anatomical arm capsule
+- sleeve length can be sleeveless, short, three-quarter or long
+- jackets use a larger ease/length envelope instead of silently reusing the T-shirt dimensions
 - per-region UVs preserve the real front/back garment photographs
+
+### Dresses / skirts
+
+- skirts use independent front/back panels anchored at the measured waist/hip envelope
+- dresses compose the torso/sleeve topology with dedicated lower front/back skirt panels
+- dress torso and skirt are joined by explicit waist seam constraints
+- UV ranges keep upper/lower source-image regions attached to the corresponding semantic mesh panels
+- skirt flare remains bounded and deterministic rather than inferred generatively
 
 ### Pants / shorts
 
@@ -105,7 +115,7 @@ Garment metadata maps to material parameters. New garments store an explicit phy
 - bend stiffness (0–100)
 - friction
 
-Structural constraints are tagged as warp or weft; XPBD selects separate compliance for each axis. Density scales particle inverse mass, while thickness feeds collision distance. Legacy/simple weight + stretch inputs still generate deterministic physical presets.
+Structural constraints are tagged as warp or weft; XPBD selects separate compliance for each axis. Density scales particle inverse mass, while thickness feeds collision distance. Legacy/simple weight + stretch inputs still generate deterministic physical presets. Preset/library values are explicitly provenance-tagged as `engineering-preset`. A garment can instead persist `lab-sheet` provenance with a user-supplied reference and optional test date; MIRRO does not promote manually entered or library values to "measured" without that evidence.
 
 The try-on runs 144 simulation steps in a dedicated Web Worker. It sends bounded position snapshots back to the UI for determinate progress and preview refreshes. Browsers without Worker support fall back to small `requestAnimationFrame` batches.
 
@@ -226,14 +236,46 @@ Census Hamming still uses the separate tiny `i32.popcnt` WASM kernel. If SIMD or
 
 The SIMD claim is intentionally scoped: camera projection, patch traversal, Census construction, cross-view logic, voxel traversal and marching tetrahedra are still TypeScript running inside the Worker. V10 moves verified numeric hot reductions to SIMD; it does not pretend the whole solver is native WASM.
 
+## Feature bundle + dense depth + benchmarked SIMD v11
+
+V11 extends v10 while preserving the same conservative v7 SDF collision boundary.
+
+### Feature-assisted turntable bundle
+
+The seven silhouette centerline observations per view remain the stable geometric baseline, but v11 also samples the image gradient field inside each body row. The strongest supported left/right interior edges form a paired feature-axis anchor. Their midpoint becomes an additional horizontal residual with bounded confidence rather than replacing silhouette geometry.
+
+The bundle uses Huber loss, bounded per-frame angle corrections and tilt regularization. After a first solve, per-view RMS residuals are compared with a median/MAD gate. One or more outlier frames can be excluded only when at least six usable views remain; otherwise all views stay active so rejection cannot silently collapse the solve. A second solve runs on accepted views. Vertical-axis validation uses a centered weighted regression of vertical residual against body height, avoiding false tilt caused by a constant optical Y offset. If this validation fails, MIRRO refuses the v11 pose model and returns to the previous shared-axis rig.
+
+Rejected frames are excluded from reference/neighbor MVS matching and therefore cannot contribute depth/TSDF observations.
+
+### Edge-aware depth propagation
+
+Cross-view consistency still runs on the original sparse working depth maps. Only a v11 calibrated-perspective scan with a validated feature bundle proceeds to densification. Each accepted depth map is expanded by a bounded factor (capped at 72 columns) using a 3×3 source neighborhood weighted by:
+
+- spatial distance;
+- luminance similarity;
+- gradient-magnitude similarity;
+- source confidence.
+
+Propagation is rejected when support is weak or local depth spread exceeds the conservative threshold. Interpolated-only samples receive lower confidence. Orthographic fallback scans intentionally keep the original sparse grid.
+
+### Benchmark-gated WebAssembly SIMD
+
+The AssemblyScript module now exports fixed hot-path kernels for nine-sample patch ZNCC/texture energy and up-to-eight-view weighted TSDF contribution fusion. At runtime, the Worker/browser warms both JavaScript and WASM paths and microbenchmarks the actual device. The v11 SIMD backend activates only when the WASM patch kernel is no more than 15% slower than the scalar JS reference; otherwise the deterministic JS implementation remains active.
+
+This is deliberately not described as a full native MVS port. Camera/world projection, mask checks, bilinear sampling, outer patch traversal, the X/Y/Z voxel-grid traversal, cross-view logic and marching-tetrahedra extraction remain TypeScript in the Worker. V11 moves bounded numeric hot loops into verified SIMD and refuses a performance regression on devices where JS is faster.
+
+### Semantic anatomy
+
+The body form additionally accepts forearm circumference, calf circumference, neck circumference and shoulder slope. Forearm/calf values alter tapered limb end radii, shoulder slope changes the shoulder joint Y position, and neck circumference is stored as semantic anatomy and influences the head/neck envelope. These measurements remain optional and use bounded deterministic fallbacks when absent.
+
 ## Engine roadmap
 
-- Extend the v10 turntable bundle with image-feature residuals, axis-origin Y/tilt validation and robust frame rejection rather than relying mainly on silhouette centerlines.
-- Move the remaining patch traversal and TSDF voxel traversal to memory-resident WASM SIMD only after browser/mobile benchmarks prove transfer and boundary-call costs are lower than the current Worker TypeScript path.
-- Add edge-aware depth propagation/upsampling from the current sparse working grid and quantify surface error against synthetic ground truth before increasing density further.
-- Add more semantic body measurements (forearm, calf, neck, shoulder slope) and guided measurement UX.
-- Replace engineering fabric presets with optional lab-backed material sheets when verified data is available.
-- Add semantic garment subtypes (short sleeve, long sleeve, dress, skirt, jacket) rather than category heuristics.
+- Quantify v11 dense-surface error against larger synthetic fixtures and real calibrated scans before raising the depth-grid cap beyond 72 columns.
+- Evaluate a memory-resident WASM implementation of projection/sampling/outer voxel traversal only if device benchmarks beat the current Worker TypeScript architecture; v11 intentionally does not claim this yet.
+- Add guided measurement UX and consistency checks for forearm, calf, neck and shoulder slope.
+- Add import/parsing for verified manufacturer/lab material sheets instead of requiring manual transcription of referenced measurements.
+- Expand semantic garment construction to jacket opening/collar/lapels, skirt/dress hem shapes and more category-specific pattern landmarks.
 - Move the Worker solver to WASM when mesh density or semantic topology increases substantially.
 - Add optional environment-map based image-based lighting and higher-quality soft shadows.
 

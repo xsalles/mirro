@@ -125,9 +125,12 @@ export function BodyMeshPreview({ calibration }: { calibration: BodyCalibration 
         aria-hidden="true"
       />
       <figcaption className="mt-2 text-xs leading-5 text-[var(--muted)]">
-        {calibration.version === 10 &&
+        {calibration.version === 11 &&
         calibration.mesh.visualHull?.multiViewStereo
-          ? "Scanner v10: bundle com δθ por frame e eixo inclinado, pirâmide 1×/½/¼ e reduções WASM SIMD no Worker quando disponíveis."
+          ? "Scanner v11: residual de features, rejeição robusta de frames, depth edge-aware e SIMD condicionado por benchmark local; o SDF conservador segue sendo a colisão."
+          : calibration.version === 10 &&
+              calibration.mesh.visualHull?.multiViewStereo
+            ? "Scanner v10: bundle com δθ por frame e eixo inclinado, pirâmide 1×/½/¼ e reduções WASM SIMD no Worker quando disponíveis."
           : calibration.version === 9 &&
               calibration.mesh.visualHull?.multiViewStereo
             ? "Scanner v9: ZNCC + Census/gradiente, coarse-to-fine subpixel e eixo compartilhado; MVS/TSDF roda em Worker com microkernel WASM quando disponível."

@@ -58,7 +58,7 @@ scope.onmessage = async (
 
     if (result) {
       result.executionBackend =
-        result.numericKernel === "wasm-simd-v1"
+        result.numericKernel !== "js-scalar"
           ? "worker-wasm-simd"
           : result.matchingKernel ===
               "wasm-popcnt32-v1"

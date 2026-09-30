@@ -562,7 +562,7 @@ export default function WardrobePage() {
                         ? ""
                         : prev.fabricTestedAt,
                   }));
-                }
+                }}
               >
                 <option value="engineering-preset">
                   Estimativa / preset de engenharia

@@ -2,6 +2,10 @@
 
 import { ImagePlus, LoaderCircle, Shirt, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import {
+  FabricDatasheetImport,
+  type AppliedFabricDatasheet,
+} from "@/components/fabric-datasheet-import";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MediaImage } from "@/components/media-image";
@@ -12,6 +16,11 @@ import {
   fabricProfileToForm,
   getFabricLibraryEntry,
 } from "@/lib/mirro/fabric-library";
+import {
+  FABRIC_PROFILE_FIELDS,
+  validateFabricPhysicalProfile,
+  type FabricProfileField,
+} from "@/lib/mirro/fabric-datasheet";
 import { defaultFabricPhysicalProfile } from "@/lib/mirro/garment-mesh";
 import { removeFlatBackground } from "@/lib/mirro/image-processing";
 import type {
@@ -87,6 +96,8 @@ export default function WardrobePage() {
   const [front, setFront] = useState<File | null>(null);
   const [back, setBack] = useState<File | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [datasheetEvidence, setDatasheetEvidence] =
+    useState<AppliedFabricDatasheet | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Garment | null>(null);
 
@@ -97,6 +108,72 @@ export default function WardrobePage() {
     if (error) return;
     if (side === "front") setFront(file);
     else setBack(file);
+  }
+
+  function applyDatasheet(
+    imported: AppliedFabricDatasheet,
+  ) {
+    setPhysics((prev) => {
+      const next = { ...prev };
+      for (const field of imported.recognizedFields) {
+        const value = imported.profile[field];
+        if (value !== undefined) {
+          next[field] = String(value);
+        }
+      }
+      return next;
+    });
+    setForm((prev) => ({
+      ...prev,
+      fabricLibraryId: "",
+      fabricSource: "lab-sheet",
+      fabricReference:
+        imported.reference?.trim() ||
+        imported.fileName,
+      fabricTestedAt: imported.testedAt ?? "",
+    }));
+    setDatasheetEvidence(imported);
+    setErrors((prev) => {
+      const next = {
+        ...prev,
+        fabricReference: "",
+        form: "",
+      };
+      for (const field of imported.recognizedFields) {
+        next[field] = "";
+      }
+      return next;
+    });
+  }
+
+  function markPhysicsFieldEdited(
+    field: FabricProfileField,
+  ) {
+    setDatasheetEvidence((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        recognizedFields:
+          prev.recognizedFields.filter(
+            (candidate) => candidate !== field,
+          ),
+      };
+    });
+  }
+
+  function useEngineeringPreset(
+    profile: ReturnType<
+      typeof defaultFabricPhysicalProfile
+    >,
+  ) {
+    setPhysics(fabricProfileToForm(profile));
+    setDatasheetEvidence(null);
+    setForm((prev) => ({
+      ...prev,
+      fabricSource: "engineering-preset",
+      fabricReference: "",
+      fabricTestedAt: "",
+    }));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -112,12 +189,15 @@ export default function WardrobePage() {
       bendStiffness: Number(physics.bendStiffness),
       friction: Number(physics.friction),
     };
-    if (physicalProfile.densityGsm < 40 || physicalProfile.densityGsm > 1000) nextErrors.densityGsm = "Use um peso entre 40 e 1000 g/m².";
-    if (physicalProfile.thicknessMm < 0.1 || physicalProfile.thicknessMm > 5) nextErrors.thicknessMm = "Use uma espessura entre 0,1 e 5 mm.";
-    if (physicalProfile.stretchWarpPct < 0 || physicalProfile.stretchWarpPct > 45) nextErrors.stretchWarpPct = "Use stretch de urdume entre 0 e 45%.";
-    if (physicalProfile.stretchWeftPct < 0 || physicalProfile.stretchWeftPct > 45) nextErrors.stretchWeftPct = "Use stretch de trama entre 0 e 45%.";
-    if (physicalProfile.bendStiffness < 0 || physicalProfile.bendStiffness > 100) nextErrors.bendStiffness = "Use rigidez entre 0 e 100.";
-    if (physicalProfile.friction < 0.02 || physicalProfile.friction > 0.8) nextErrors.friction = "Use atrito entre 0,02 e 0,8.";
+    const physicsErrors =
+      validateFabricPhysicalProfile(
+        physicalProfile,
+      );
+    for (const [field, error] of Object.entries(
+      physicsErrors,
+    )) {
+      if (error) nextErrors[field] = error;
+    }
     if (
       form.fabricSource === "lab-sheet" &&
       form.fabricReference.trim().length < 3
@@ -177,6 +257,22 @@ export default function WardrobePage() {
                 testedAt:
                   form.fabricTestedAt ||
                   undefined,
+                measuredFields:
+                  datasheetEvidence
+                    ?.recognizedFields,
+                importedFrom:
+                  datasheetEvidence
+                    ? {
+                        fileName:
+                          datasheetEvidence.fileName,
+                        format:
+                          datasheetEvidence.format,
+                        sha256:
+                          datasheetEvidence.sha256,
+                        parserVersion:
+                          datasheetEvidence.parserVersion,
+                      }
+                    : undefined,
               }
             : selectedFabric?.evidence ?? {
                 source: "engineering-preset",
@@ -190,6 +286,7 @@ export default function WardrobePage() {
         { blob: backBlob, ref: backRef },
       ]);
       setForm((prev) => ({ ...prev, name: "" }));
+      setDatasheetEvidence(null);
       setFront(null);
       setBack(null);
     } catch {
@@ -306,7 +403,12 @@ export default function WardrobePage() {
                       fabricReference: "",
                       fabricTestedAt: "",
                     }));
-                    if (entry) setPhysics(fabricProfileToForm(entry.profile));
+                    setDatasheetEvidence(null);
+                    if (entry) {
+                      setPhysics(
+                        fabricProfileToForm(entry.profile),
+                      );
+                    }
                   }}
                 >
                   <option value="">Preset simples / ajuste manual</option>
@@ -336,8 +438,12 @@ export default function WardrobePage() {
                       fabricWeight,
                       fabricLibraryId: "",
                     }));
-                    const preset = defaultFabricPhysicalProfile(fabricWeight, form.stretch);
-                    setPhysics(fabricProfileToForm(preset));
+                    const preset =
+                      defaultFabricPhysicalProfile(
+                        fabricWeight,
+                        form.stretch,
+                      );
+                    useEngineeringPreset(preset);
                   }}
                 >
                   <option value="light">Leve</option>
@@ -359,8 +465,12 @@ export default function WardrobePage() {
                       stretch,
                       fabricLibraryId: "",
                     }));
-                    const preset = defaultFabricPhysicalProfile(form.fabricWeight, stretch);
-                    setPhysics(fabricProfileToForm(preset));
+                    const preset =
+                      defaultFabricPhysicalProfile(
+                        form.fabricWeight,
+                        stretch,
+                      );
+                    useEngineeringPreset(preset);
                   }}
                 >
                   <option value="none">Nenhuma</option>
@@ -412,6 +522,13 @@ export default function WardrobePage() {
             <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">XPBD anisotrópico</span>
           </div>
 
+          <div className="mt-4">
+            <FabricDatasheetImport
+              current={datasheetEvidence}
+              onImported={applyDatasheet}
+            />
+          </div>
+
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <div>
               <label htmlFor="fabricSource" className="text-xs font-semibold">
@@ -421,17 +538,30 @@ export default function WardrobePage() {
                 id="fabricSource"
                 className="mt-2"
                 value={form.fabricSource}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const fabricSource =
+                    e.target.value as
+                      | "engineering-preset"
+                      | "lab-sheet";
+                  setDatasheetEvidence(null);
                   setForm((prev) => ({
                     ...prev,
-                    fabricSource: e.target.value as
-                      | "engineering-preset"
-                      | "lab-sheet",
+                    fabricSource,
                     fabricLibraryId:
-                      e.target.value === "lab-sheet"
+                      fabricSource === "lab-sheet"
                         ? ""
                         : prev.fabricLibraryId,
-                  }))
+                    fabricReference:
+                      fabricSource ===
+                      "engineering-preset"
+                        ? ""
+                        : prev.fabricReference,
+                    fabricTestedAt:
+                      fabricSource ===
+                      "engineering-preset"
+                        ? ""
+                        : prev.fabricTestedAt,
+                  }));
                 }
               >
                 <option value="engineering-preset">
@@ -525,8 +655,17 @@ export default function WardrobePage() {
                     aria-invalid={Boolean(errors[key])}
                     aria-describedby={errors[key] ? `${key}-error` : undefined}
                     onChange={(e) => {
-                      setPhysics((prev) => ({ ...prev, [key]: e.target.value }));
-                      setForm((prev) => ({ ...prev, fabricLibraryId: "" }));
+                      const field =
+                        key as FabricProfileField;
+                      setPhysics((prev) => ({
+                        ...prev,
+                        [field]: e.target.value,
+                      }));
+                      setForm((prev) => ({
+                        ...prev,
+                        fabricLibraryId: "",
+                      }));
+                      markPhysicsFieldEdited(field);
                     }}
                   />
                   {unit ? (
@@ -539,6 +678,20 @@ export default function WardrobePage() {
               </div>
             ))}
           </div>
+
+          {form.fabricSource === "lab-sheet" &&
+          datasheetEvidence ? (
+            <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+              Proveniência atual:{" "}
+              <strong className="text-[var(--ink)]">
+                {datasheetEvidence.recognizedFields.length}/
+                {FABRIC_PROFILE_FIELDS.length}
+              </strong>{" "}
+              campos ainda estão vinculados à ficha{" "}
+              {datasheetEvidence.fileName}. Campos editados
+              manualmente deixam de contar como importados.
+            </p>
+          ) : null}
         </section>
 
         {errors.form ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-[var(--danger)]">{errors.form}</p> : null}
@@ -584,7 +737,9 @@ export default function WardrobePage() {
                     ) : null}
                     {garment.fabricEvidence?.source === "lab-sheet" ? (
                       <p className="mt-1 text-xs font-semibold text-[var(--thread)]">
-                        parâmetros medidos · {garment.fabricEvidence.reference ?? "ficha técnica"}
+                        {garment.fabricEvidence.importedFrom
+                          ? `ficha importada · ${garment.fabricEvidence.measuredFields?.length ?? 0}/6 campos · ${garment.fabricEvidence.reference ?? garment.fabricEvidence.importedFrom.fileName}`
+                          : `ficha referenciada · ${garment.fabricEvidence.reference ?? "sem referência"}`}
                       </p>
                     ) : garment.physicalProfile ? (
                       <p className="mt-1 text-xs font-semibold text-[var(--muted)]">

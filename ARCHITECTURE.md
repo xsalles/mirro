@@ -289,12 +289,24 @@ V13 adds a measurement-input layer without changing BodyCalibration v11 or the r
 
 The body form now clears stale field errors when that field changes and focuses the first invalid control after an invalid submit. Guided measurements remain local state and persist through the existing BodyProfile path; no new network or storage boundary is introduced.
 
+## Fabric datasheet import v14
+
+V14 adds a deterministic local parser around the existing XPBD fabric profile; it does not change the cloth solver or fabricate unavailable material properties.
+
+`src/lib/mirro/fabric-datasheet.ts` owns the canonical physical-field limits used by both manual garment entry and imported sheets. It accepts normalized JSON, CSV/TSV or line-oriented TXT and recognizes common Portuguese/English aliases for gramatura/areal density, thickness, warp/weft stretch, normalized bend stiffness and friction. Density can convert oz/yd² to g/m²; thickness can convert cm, micrometers and inches to mm. Recognized values outside MIRRO's supported solver ranges reject the import instead of being clamped.
+
+A partial valid sheet can prefill only the fields it actually contains. V14 deliberately does not infer arbitrary laboratory bending units into MIRRO's normalized 0–100 bend parameter; unsupported/unrecognized fields remain manual.
+
+`src/components/fabric-datasheet-import.tsx` reads and hashes at most one 256 KB text-format source entirely in the browser. The raw file is never stored. Persisted `FabricEvidence` can contain `measuredFields` plus `importedFrom` metadata (file name, source format, parser version, SHA-256). Manual editing of one imported physics value removes only that field from `measuredFields`, so provenance follows the actual current value instead of the historical import event.
+
+The SHA-256 identifies the exact source bytes used; it is not a digital signature and does not prove that a manufacturer/lab source is authentic. See `FABRIC-DATASHEET.md`.
+
 ## Engine roadmap
 
 - Expand v12 accuracy evidence with more synthetic body shapes/lighting conditions and at least three independent real calibrated scans; keep the depth-grid cap at 72 until the evidence gate passes.
 - Evaluate a memory-resident WASM implementation of projection/sampling/outer voxel traversal only if device benchmarks beat the current Worker TypeScript architecture; v11 intentionally does not claim this yet.
 - Expand the v13 guided measurement system with optional repeated-measurement confidence/history only if the UX can stay local-first and avoid turning advisory consistency checks into body-shape rejection.
-- Add import/parsing for verified manufacturer/lab material sheets instead of requiring manual transcription of referenced measurements.
+- Expand v14 fabric evidence only when a trustworthy source format warrants it; PDF/OCR extraction remains intentionally unclaimed until a deterministic local parser can preserve field-level provenance and unit semantics.
 - Expand semantic garment construction to jacket opening/collar/lapels, skirt/dress hem shapes and more category-specific pattern landmarks.
 - Move the Worker solver to WASM when mesh density or semantic topology increases substantially.
 - Add optional environment-map based image-based lighting and higher-quality soft shadows.

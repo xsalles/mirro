@@ -263,7 +263,11 @@ function parsePhysicalValue(
   if (number === undefined) return undefined;
   const text =
     typeof raw === "string"
-      ? normalizeKey(raw)
+      ? normalizeKey(
+          raw
+            .replace(/µ/g, "u")
+            .replace(/μ/g, "u"),
+        )
       : "";
 
   if (field === "densityGsm") {

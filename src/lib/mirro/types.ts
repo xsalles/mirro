@@ -511,6 +511,13 @@ export type FabricEvidence = {
   reference?: string;
   testedAt?: string;
   notes?: string;
+  measuredFields?: Array<keyof FabricPhysicalProfile>;
+  importedFrom?: {
+    fileName: string;
+    format: "json" | "csv" | "text";
+    sha256: string;
+    parserVersion: 1;
+  };
 };
 
 export type FabricLibraryEntry = {

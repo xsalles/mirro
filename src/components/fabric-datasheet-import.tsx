@@ -226,7 +226,9 @@ export function FabricDatasheetImport({
               />
               <div>
                 <p className="font-semibold text-emerald-900">
-                  {current.fileName} · {message}
+                  {current.fileName} ·{" "}
+                  {current.recognizedFields.length}/6
+                  parâmetros ainda vinculados à ficha.
                 </p>
                 <p className="mt-1 break-all text-[11px] text-[var(--muted)]">
                   SHA-256{" "}

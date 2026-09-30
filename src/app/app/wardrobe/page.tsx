@@ -161,7 +161,7 @@ export default function WardrobePage() {
     });
   }
 
-  function useEngineeringPreset(
+  function applyEngineeringPreset(
     profile: ReturnType<
       typeof defaultFabricPhysicalProfile
     >,
@@ -443,7 +443,7 @@ export default function WardrobePage() {
                         fabricWeight,
                         form.stretch,
                       );
-                    useEngineeringPreset(preset);
+                    applyEngineeringPreset(preset);
                   }}
                 >
                   <option value="light">Leve</option>
@@ -470,7 +470,7 @@ export default function WardrobePage() {
                         form.fabricWeight,
                         stretch,
                       );
-                    useEngineeringPreset(preset);
+                    applyEngineeringPreset(preset);
                   }}
                 >
                   <option value="none">Nenhuma</option>
